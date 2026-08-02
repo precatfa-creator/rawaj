@@ -44,6 +44,7 @@ export const StoreForm: React.FC<{
   const isNew = !store;
   const [name, setName] = useState('');
   const [image, setImage] = useState('');
+  const [facebookPage, setFacebookPage] = useState('');
   const { busy, error, submit } = useSubmit(onClose);
 
   // Re-seed the fields whenever a different record is opened.
@@ -53,6 +54,7 @@ export const StoreForm: React.FC<{
     setSeeded(key);
     setName(store?.name ?? '');
     setImage(store?.image ?? '');
+    setFacebookPage(store?.facebookPage ?? '');
   }
   if (!open && seeded !== null) setSeeded(null);
 
@@ -66,13 +68,28 @@ export const StoreForm: React.FC<{
       <form
         id="entity-form"
         className="space-y-4"
-        onSubmit={submit(() => saveStore({ id: store?.id ?? newId(), name: name.trim(), image: image.trim() }, isNew))}
+        onSubmit={submit(() => saveStore({ id: store?.id ?? newId(), name, image, facebookPage }, isNew))}
       >
         <Field label="اسم المتجر">
           <input value={name} onChange={e => setName(e.target.value)} required className={fieldClass} />
         </Field>
-        <Field label="رابط صورة الغلاف" hint="اتركه فارغاً إن لم تتوفر صورة.">
-          <input value={image} onChange={e => setImage(e.target.value)} dir="ltr" type="url" className={fieldClass} />
+        {/* One image, so the gallery uploader is capped at 1 rather than duplicated. */}
+        <ImageUploader
+          images={image ? [image] : []}
+          onChange={images => setImage(images[0] ?? '')}
+          max={1}
+          label="صورة المتجر"
+          hint="تظهر على بطاقة المتجر."
+        />
+        <Field label="صفحة فيسبوك" hint="كثير من المتاجر لا تملك موقعاً، فقط صفحة.">
+          <input
+            value={facebookPage}
+            onChange={e => setFacebookPage(e.target.value)}
+            dir="ltr"
+            type="url"
+            placeholder="https://facebook.com/…"
+            className={fieldClass}
+          />
         </Field>
         {error && <ErrorNote message={error} />}
       </form>
@@ -126,7 +143,7 @@ export const ProductForm: React.FC<{
       onClose={onClose}
       footer={<Footer busy={busy} onCancel={onClose} label={isNew ? 'إضافة المنتج' : 'حفظ التعديلات'} />}
     >
-      <form id="entity-form" className="grid grid-cols-1 sm:grid-cols-2 gap-4" onSubmit={submit(() => saveProduct({ ...draft, name: draft.name.trim(), sku: draft.sku.trim() }, isNew))}>
+      <form id="entity-form" className="grid grid-cols-1 sm:grid-cols-2 gap-4" onSubmit={submit(() => saveProduct(draft, isNew))}>
         <div className="sm:col-span-2">
           <Field label="اسم المنتج">
             <input value={draft.name} onChange={e => set('name', e.target.value)} required className={fieldClass} />
@@ -183,7 +200,7 @@ export const CustomerForm: React.FC<{
 }> = ({ open, customer, onClose }) => {
   const isNew = !customer;
   const [draft, setDraft] = useState<CustomerDraft>({
-    id: '', name: '', phone: '', whatsapp: '', city: '', address: '', rating: 5, status: 'active',
+    id: '', name: '', phone: '', whatsapp: '', city: '', address: '', status: 'active',
   });
   const { busy, error, submit } = useSubmit(onClose);
 
@@ -198,7 +215,6 @@ export const CustomerForm: React.FC<{
       whatsapp: customer?.whatsapp ?? '',
       city: customer?.city ?? '',
       address: customer?.address ?? '',
-      rating: customer?.rating || 5,
       status: customer?.status ?? 'active',
     });
   }
@@ -215,7 +231,7 @@ export const CustomerForm: React.FC<{
       onClose={onClose}
       footer={<Footer busy={busy} onCancel={onClose} label={isNew ? 'إضافة العميل' : 'حفظ التعديلات'} />}
     >
-      <form id="entity-form" className="grid grid-cols-1 sm:grid-cols-2 gap-4" onSubmit={submit(() => saveCustomer({ ...draft, name: draft.name.trim() }, isNew))}>
+      <form id="entity-form" className="grid grid-cols-1 sm:grid-cols-2 gap-4" onSubmit={submit(() => saveCustomer(draft, isNew))}>
         <div className="sm:col-span-2">
           <Field label="الاسم">
             <input value={draft.name} onChange={e => set('name', e.target.value)} required className={fieldClass} />
@@ -241,9 +257,6 @@ export const CustomerForm: React.FC<{
             { value: 'inactive', label: 'غير نشط' },
           ]}
         />
-        <Field label="التقييم (1-5)">
-          <input type="number" min={1} max={5} value={draft.rating} onChange={e => set('rating', Number(e.target.value))} className={fieldClass} />
-        </Field>
         <div className="sm:col-span-2">
           <Field label="العنوان">
             <input value={draft.address} onChange={e => set('address', e.target.value)} className={fieldClass} />

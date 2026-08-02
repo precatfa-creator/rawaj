@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { useAppStore } from '../store';
-import { Plus, Package, ShoppingCart, TrendingUp, ChevronLeft, Store as StoreIcon, Pencil, Trash2 } from 'lucide-react';
+import { Plus, Package, ShoppingCart, TrendingUp, ChevronLeft, Store as StoreIcon, Pencil, Trash2, Facebook } from 'lucide-react';
 import { motion } from 'motion/react';
 import { useStoreTotals } from '../lib/queries';
 import { deleteStore } from '../lib/mutations';
@@ -85,6 +85,20 @@ export const Stores: React.FC<{ onOpenStore: (storeId: string) => void }> = ({ o
                     <Trash2 size={17} />
                   </button>
                 </div>
+
+                {/* Outside the card button: an <a> inside a <button> is invalid. */}
+                {store.facebookPage && (
+                  <a
+                    href={store.facebookPage}
+                    target="_blank"
+                    rel="noreferrer"
+                    aria-label={`صفحة ${store.name} على فيسبوك`}
+                    title="صفحة فيسبوك"
+                    className={`${iconButton} absolute top-3 right-3 z-10 text-surface-600 hover:text-[#1877f2]`}
+                  >
+                    <Facebook size={17} />
+                  </a>
+                )}
 
                 <button
                   type="button"

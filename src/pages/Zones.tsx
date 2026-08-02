@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { MapPin, Plus, Pencil, Trash2, Truck, Users, Search } from 'lucide-react';
+import { MapPin, Plus, Pencil, Trash2, Truck, Search } from 'lucide-react';
 import { motion } from 'motion/react';
 import { useAppStore } from '../store';
 import { matchesSearch } from '../lib/arabic';
@@ -69,7 +69,7 @@ const ZoneForm: React.FC<{ open: boolean; zone: DeliveryZone | null; onClose: ()
         onSubmit={async event => {
           event.preventDefault();
           setBusy(true); setError('');
-          const result = await saveZone({ ...draft, name: draft.name.trim() }, isNew);
+          const result = await saveZone(draft, isNew);
           setBusy(false);
           if (result.ok) onClose(); else setError(result.message ?? '');
         }}
@@ -119,7 +119,6 @@ export const Zones: React.FC = () => {
 
   const activeCount = zones.filter(zone => zone.active).length;
   const priced = zones.filter(zone => zone.fee > 0);
-  const covered = zones.filter(zone => zone.active).reduce((sum, zone) => sum + zone.population, 0);
 
   // Customers whose city does not match any zone name or capital are unreachable
   // by the zone list as it stands.
@@ -136,9 +135,8 @@ export const Zones: React.FC = () => {
         </button>
       </PageHead>
 
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
         <Metric label="مناطق مفعّلة" value={`${count(activeCount)} / ${count(zones.length)}`} icon={<MapPin size={18} />} />
-        <Metric label="السكان المغطّون" value={count(covered)} hint="تقديرات 2020" icon={<Users size={18} />} />
         <Metric
           label="مناطق مسعّرة"
           value={`${count(priced.length)} / ${count(zones.length)}`}
@@ -205,7 +203,7 @@ export const Zones: React.FC = () => {
                   </Pill>
                 </div>
 
-                <dl className="grid grid-cols-3 gap-2 mt-4 pt-4 border-t border-surface-200/70 text-center">
+                <dl className="grid grid-cols-2 gap-2 mt-4 pt-4 border-t border-surface-200/70 text-center">
                   <div>
                     <dt className="text-xs text-surface-500">الرسوم</dt>
                     <dd className={`font-black text-sm mt-1 tabular-nums ${zone.fee > 0 ? 'text-surface-900' : 'text-surface-400'}`}>
@@ -216,10 +214,6 @@ export const Zones: React.FC = () => {
                     <dt className="text-xs text-surface-500">المدة</dt>
                     <dd className="font-black text-sm mt-1 text-surface-900 tabular-nums">{zone.deliveryTimeDays} أيام</dd>
                   </div>
-                  <div>
-                    <dt className="text-xs text-surface-500">السكان</dt>
-                    <dd className="font-black text-sm mt-1 text-surface-900 tabular-nums">{count(zone.population)}</dd>
-                  </div>
                 </dl>
               </Card>
             </motion.div>
@@ -228,8 +222,8 @@ export const Zones: React.FC = () => {
       )}
 
       <p className="text-xs text-surface-500 leading-relaxed">
-        الأسماء والأقاليم والمراكز ومساحات وسكان المناطق مأخوذة من التقسيم الإداري الليبي (22 شعبية، تقديرات 2020).
-        الرسوم تبدأ من صفر لأنه لا يوجد مصدر عام لأسعار التوصيل — حدّدها بنفسك. مدة التوصيل تقدير أولي محسوب من الكثافة السكانية وقابل للتعديل.
+        الأسماء والأقاليم والمراكز مأخوذة من التقسيم الإداري الليبي (22 شعبية).
+        الرسوم تبدأ من صفر لأنه لا يوجد مصدر عام لأسعار التوصيل — حدّدها بنفسك. مدة التوصيل تقدير أولي قابل للتعديل.
       </p>
 
       <ZoneForm open={creating || editing !== null} zone={editing} onClose={() => { setCreating(false); setEditing(null); }} />

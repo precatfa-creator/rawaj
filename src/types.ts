@@ -4,6 +4,7 @@ export interface Store {
   id: string;
   name: string;
   image: string;
+  facebookPage: string;
   productCount: number;
   customerCount: number;
   orderCount: number;
@@ -82,7 +83,6 @@ export interface DeliveryZone {
   region: ZoneRegion;
   capital: string;
   areaKm2: number;
-  population: number;
   fee: number;
   deliveryTimeDays: number;
   active: boolean;

@@ -7,10 +7,15 @@ interface ImageUploaderProps {
   images: string[];
   onChange: (images: string[]) => void;
   max?: number;
+  /** Defaults to the product gallery wording; stores pass their own. */
+  label?: string;
+  hint?: string;
 }
 
 /** Gallery uploader. The first image is the one the product card shows. */
-export const ImageUploader: React.FC<ImageUploaderProps> = ({ images, onChange, max = 4 }) => {
+export const ImageUploader: React.FC<ImageUploaderProps> = ({
+  images, onChange, max = 4, label = 'صور المنتج', hint,
+}) => {
   const id = useId();
   const inputRef = useRef<HTMLInputElement>(null);
   const [busy, setBusy] = useState(false);
@@ -47,15 +52,16 @@ export const ImageUploader: React.FC<ImageUploaderProps> = ({ images, onChange, 
 
   return (
     <div>
-      <span className="block text-sm font-bold text-surface-700 mb-1.5">صور المنتج</span>
+      <span className="block text-sm font-bold text-surface-700 mb-1.5">{label}</span>
+      {hint && <span className="block text-xs text-surface-500 -mt-1 mb-2">{hint}</span>}
 
       {images.length > 0 && (
-        <ul className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-3">
+        <ul className={`grid gap-3 mb-3 ${max === 1 ? 'grid-cols-2 sm:grid-cols-3' : 'grid-cols-2 sm:grid-cols-4'}`}>
           {images.map((url, index) => (
             <li key={url} className="relative group rounded-xl overflow-hidden border border-surface-200 bg-surface-50 aspect-square">
-              <img src={url} alt={`صورة المنتج ${index + 1}`} loading="lazy" className="w-full h-full object-cover" />
+              <img src={url} alt={`${label} ${index + 1}`} loading="lazy" className="w-full h-full object-cover" />
 
-              {index === 0 && (
+              {index === 0 && max > 1 && (
                 <span className="absolute top-1.5 right-1.5 bg-primary-700 text-white text-[11px] font-bold px-2 py-0.5 rounded-md">
                   الغلاف
                 </span>

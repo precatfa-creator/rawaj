@@ -2,6 +2,7 @@ import { supabase } from '../db/supabase';
 import type { Customer, DeliveryZone, OrderItem, OrderStatus, Product, Store } from '../types';
 import { orderTotals } from './orderMath';
 import { deleteProductImages } from './storage';
+import { trimRow } from './text';
 
 export { orderTotals, nextOrderNumber } from './orderMath';
 
@@ -31,11 +32,19 @@ export const newId = () => crypto.randomUUID();
 
 // ---- stores ----
 
-export const saveStore = (store: Pick<Store, 'id' | 'name' | 'image'>, isNew: boolean) =>
+export type StoreDraft = Pick<Store, 'id' | 'name' | 'image' | 'facebookPage'>;
+
+const storeRow = (draft: StoreDraft) => trimRow({
+  name: draft.name,
+  image: draft.image,
+  facebook_page: draft.facebookPage,
+});
+
+export const saveStore = (draft: StoreDraft, isNew: boolean) =>
   run(
     isNew
-      ? supabase.from('stores').insert({ id: store.id, name: store.name, image: store.image })
-      : supabase.from('stores').update({ name: store.name, image: store.image }).eq('id', store.id),
+      ? supabase.from('stores').insert({ id: draft.id, ...storeRow(draft) })
+      : supabase.from('stores').update(storeRow(draft)).eq('id', draft.id),
     isNew ? 'تعذر إنشاء المتجر.' : 'تعذر حفظ تعديلات المتجر.',
   );
 
@@ -52,7 +61,7 @@ export type ProductDraft = Pick<
   'id' | 'storeId' | 'name' | 'description' | 'sku' | 'category' | 'purchasePrice' | 'sellingPrice' | 'stock' | 'minStock' | 'status'
 > & { images: string[] };
 
-const productRow = (draft: ProductDraft) => ({
+const productRow = (draft: ProductDraft) => trimRow({
   store_id: draft.storeId,
   name: draft.name,
   description: draft.description,
@@ -87,16 +96,17 @@ export const deleteProduct = async (id: string, images: string[] = []): Promise<
 
 export type CustomerDraft = Pick<
   Customer,
-  'id' | 'name' | 'phone' | 'whatsapp' | 'city' | 'address' | 'rating' | 'status'
+  'id' | 'name' | 'phone' | 'whatsapp' | 'city' | 'address' | 'status'
 >;
 
-const customerRow = (draft: CustomerDraft) => ({
+// `rating` is deliberately absent: it is not collected at creation time and an
+// update must not reset a rating the customer earned later.
+const customerRow = (draft: CustomerDraft) => trimRow({
   name: draft.name,
   phone: draft.phone,
   whatsapp: draft.whatsapp,
   city: draft.city,
   address: draft.address,
-  rating: draft.rating,
   status: draft.status,
 });
 
@@ -139,11 +149,11 @@ export const createOrder = async (draft: OrderDraft): Promise<WriteResult> => {
     p_order_number: draft.orderNumber,
     p_store_id: draft.storeId,
     p_customer_id: draft.customerId,
-    p_customer_name: draft.customerName,
-    p_items: draft.items,
+    p_customer_name: draft.customerName.trim(),
+    p_items: draft.items.map(item => trimRow(item as unknown as Record<string, unknown>)),
     p_discount: draft.discount,
     p_delivery_fee: draft.deliveryFee,
-    p_notes: draft.notes,
+    p_notes: draft.notes.trim(),
   });
 
   if (!error) return ok;
@@ -166,14 +176,14 @@ export type ZoneDraft = Pick<
 >;
 
 export const saveZone = (draft: ZoneDraft, isNew: boolean) => {
-  const row = {
+  const row = trimRow({
     name: draft.name,
     region: draft.region,
     capital: draft.capital,
     fee: draft.fee,
     delivery_time_days: draft.deliveryTimeDays,
     active: draft.active,
-  };
+  });
   return run(
     isNew
       ? supabase.from('delivery_zones').insert({ id: draft.id, ...row })
