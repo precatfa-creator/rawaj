@@ -80,7 +80,7 @@ export const Products: React.FC<PagedProps> = ({ page, onPage }) => {
           </div>
           <input
             type="search"
-            placeholder="ابحث بالاسم أو SKU..."
+            placeholder="ابحث بالاسم أو SKU أو الرقم التسلسلي..."
             aria-label="ابحث في المنتجات"
             value={searchTerm}
             onChange={e => { setSearchTerm(e.target.value); onPage(0); }}
