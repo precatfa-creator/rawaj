@@ -123,37 +123,26 @@ grant execute on function public.record_stock_entry(text, text, text, integer, t
 
 -- --------------------------------------------------- orders join the ledger
 --
--- Same function as before, with the stock movement it already performed now
--- also written down. Without this the ledger would explain every change except
--- the most common one.
+-- Based on the CURRENT definition from 20260807, not the original from
+-- 20260804: order numbers are generated here when the client sends none, and
+-- the function returns the number it used. Rebuilding from the older body would
+-- have quietly removed both — every order after the first would then insert
+-- order_number = '' and collide on the unique index.
 --
 -- It changes from SECURITY INVOKER to SECURITY DEFINER because stock_entries
 -- grants INSERT to nobody — that is what stops a client forging ledger rows.
--- The is_active_user() check added at the top is not a relaxation: every table
--- this function touches carries exactly one policy, "active users can access
--- it", so checking it once here enforces the same rule the RLS did.
+-- The is_active_user() check added in its place enforces the same rule the RLS
+-- policy did.
 create or replace function public.create_order_with_stock(
-  p_id text,
-  p_order_number text,
-  p_store_id text,
-  p_customer_id text,
-  p_customer_name text,
-  p_items jsonb,
-  p_discount numeric,
-  p_delivery_fee numeric,
-  p_notes text
+  p_id text, p_order_number text, p_store_id text, p_customer_id text,
+  p_customer_name text, p_items jsonb, p_discount numeric, p_delivery_fee numeric, p_notes text
 )
-returns void
-language plpgsql
-security definer
-set search_path = ''
+returns text
+language plpgsql security definer set search_path = ''
 as $$
 declare
-  v_subtotal numeric(14, 2);
-  v_total numeric(14, 2);
-  v_line record;
-  v_available integer;
-  v_name text;
+  v_subtotal numeric(14,2); v_total numeric(14,2); v_line record;
+  v_available integer; v_name text; v_number text;
 begin
   if not (select public.is_active_user()) then
     raise exception 'NOT_AUTHORIZED';
@@ -163,76 +152,54 @@ begin
     raise exception 'EMPTY_ORDER';
   end if;
 
-  select coalesce(sum((item ->> 'price')::numeric * (item ->> 'quantity')::integer), 0)
-    into v_subtotal
-  from jsonb_array_elements(p_items) as item;
+  v_number := nullif(trim(coalesce(p_order_number, '')), '');
+  if v_number is null then
+    select 'ORD-' || (coalesce(max(nullif(regexp_replace(order_number, '\D', '', 'g'), ''))::bigint, 1000) + 1)::text
+      into v_number from public.orders;
+  end if;
 
+  select coalesce(sum((item ->> 'price')::numeric * (item ->> 'quantity')::integer), 0)
+    into v_subtotal from jsonb_array_elements(p_items) as item;
   v_total := greatest(0, v_subtotal - coalesce(p_discount, 0) + coalesce(p_delivery_fee, 0));
 
-  -- Lock and check every line before writing anything.
   for v_line in
-    select item ->> 'productId' as product_id,
-           (item ->> 'quantity')::integer as quantity
+    select item ->> 'productId' as product_id, (item ->> 'quantity')::integer as quantity
     from jsonb_array_elements(p_items) as item
   loop
     select stock, name into v_available, v_name
-    from public.products
-    where id = v_line.product_id
-    for update;
-
-    -- Lines whose product no longer exists are still allowed onto the order;
-    -- there is simply no inventory to adjust.
+      from public.products where id = v_line.product_id for update;
     if found and v_available < v_line.quantity then
       raise exception 'INSUFFICIENT_STOCK:%', v_name;
     end if;
   end loop;
 
-  insert into public.orders (
-    id, order_number, store_id, customer_id, customer_name,
-    items, subtotal, discount, delivery_fee, total, notes
-  )
-  values (
-    p_id, p_order_number, p_store_id, p_customer_id, p_customer_name,
-    p_items, v_subtotal, coalesce(p_discount, 0), coalesce(p_delivery_fee, 0), v_total, coalesce(p_notes, '')
-  );
+  insert into public.orders (id, order_number, store_id, customer_id, customer_name,
+                             items, subtotal, discount, delivery_fee, total, notes)
+  values (p_id, v_number, p_store_id, p_customer_id, p_customer_name, p_items,
+          v_subtotal, coalesce(p_discount,0), coalesce(p_delivery_fee,0), v_total, coalesce(p_notes,''));
 
   update public.products p
   set stock = p.stock - line.quantity,
       status = case when p.stock - line.quantity <= 0 then 'out_of_stock' else p.status end
-  from (
-    select item ->> 'productId' as product_id,
-           sum((item ->> 'quantity')::integer) as quantity
-    from jsonb_array_elements(p_items) as item
-    group by 1
-  ) as line
+  from (select item ->> 'productId' as product_id, sum((item ->> 'quantity')::integer) as quantity
+        from jsonb_array_elements(p_items) as item group by 1) as line
   where p.id = line.product_id;
 
-  -- One ledger row per product on the order, carrying the post-movement
-  -- balance the UPDATE above just wrote.
+  -- One ledger row per product on the order, carrying the post-movement balance
+  -- the UPDATE above just wrote.
   insert into public.stock_entries (id, product_id, store_id, kind, quantity, balance, note, order_id)
-  select
-    gen_random_uuid()::text,
-    p.id,
-    p.store_id,
-    'sale',
-    -line.quantity,
-    p.stock,
-    'طلب ' || p_order_number,
-    p_id
-  from (
-    select item ->> 'productId' as product_id,
-           sum((item ->> 'quantity')::integer) as quantity
-    from jsonb_array_elements(p_items) as item
-    group by 1
-  ) as line
+  select gen_random_uuid()::text, p.id, p.store_id, 'sale', -line.quantity, p.stock,
+         'طلب ' || v_number, p_id
+  from (select item ->> 'productId' as product_id, sum((item ->> 'quantity')::integer) as quantity
+        from jsonb_array_elements(p_items) as item group by 1) as line
   join public.products p on p.id = line.product_id
   where line.quantity <> 0;
+
+  return v_number;
 end;
 $$;
 
-grant execute on function public.create_order_with_stock(
-  text, text, text, text, text, jsonb, numeric, numeric, text
-) to authenticated;
+grant execute on function public.create_order_with_stock(text,text,text,text,text,jsonb,numeric,numeric,text) to authenticated;
 
 -- The ledger is append-only through a definer function, so the audit trigger is
 -- belt and braces rather than the record of last resort — but a table nobody

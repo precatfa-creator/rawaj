@@ -82,33 +82,24 @@ create index if not exists orders_agent_id_idx on public.orders (agent_id);
 -- Adding a parameter creates an overload rather than replacing the function, so
 -- the old signature is dropped first — two functions of the same name differing
 -- only in a defaulted trailing argument make every call ambiguous.
+--
+-- The body carries forward everything 20260807 and 20260811 established:
+-- server-side order numbering, the returned number, and the sale ledger rows.
 drop function if exists public.create_order_with_stock(
   text, text, text, text, text, jsonb, numeric, numeric, text
 );
 
 create or replace function public.create_order_with_stock(
-  p_id text,
-  p_order_number text,
-  p_store_id text,
-  p_customer_id text,
-  p_customer_name text,
-  p_items jsonb,
-  p_discount numeric,
-  p_delivery_fee numeric,
-  p_notes text,
-  p_agent_id text default null
+  p_id text, p_order_number text, p_store_id text, p_customer_id text,
+  p_customer_name text, p_items jsonb, p_discount numeric, p_delivery_fee numeric,
+  p_notes text, p_agent_id text default null
 )
-returns void
-language plpgsql
-security definer
-set search_path = ''
+returns text
+language plpgsql security definer set search_path = ''
 as $$
 declare
-  v_subtotal numeric(14, 2);
-  v_total numeric(14, 2);
-  v_line record;
-  v_available integer;
-  v_name text;
+  v_subtotal numeric(14,2); v_total numeric(14,2); v_line record;
+  v_available integer; v_name text; v_number text;
 begin
   if not (select public.is_active_user()) then
     raise exception 'NOT_AUTHORIZED';
@@ -118,69 +109,49 @@ begin
     raise exception 'EMPTY_ORDER';
   end if;
 
-  select coalesce(sum((item ->> 'price')::numeric * (item ->> 'quantity')::integer), 0)
-    into v_subtotal
-  from jsonb_array_elements(p_items) as item;
+  v_number := nullif(trim(coalesce(p_order_number, '')), '');
+  if v_number is null then
+    select 'ORD-' || (coalesce(max(nullif(regexp_replace(order_number, '\D', '', 'g'), ''))::bigint, 1000) + 1)::text
+      into v_number from public.orders;
+  end if;
 
+  select coalesce(sum((item ->> 'price')::numeric * (item ->> 'quantity')::integer), 0)
+    into v_subtotal from jsonb_array_elements(p_items) as item;
   v_total := greatest(0, v_subtotal - coalesce(p_discount, 0) + coalesce(p_delivery_fee, 0));
 
-  -- Lock and check every line before writing anything.
   for v_line in
-    select item ->> 'productId' as product_id,
-           (item ->> 'quantity')::integer as quantity
+    select item ->> 'productId' as product_id, (item ->> 'quantity')::integer as quantity
     from jsonb_array_elements(p_items) as item
   loop
     select stock, name into v_available, v_name
-    from public.products
-    where id = v_line.product_id
-    for update;
-
-    -- Lines whose product no longer exists are still allowed onto the order;
-    -- there is simply no inventory to adjust.
+      from public.products where id = v_line.product_id for update;
     if found and v_available < v_line.quantity then
       raise exception 'INSUFFICIENT_STOCK:%', v_name;
     end if;
   end loop;
 
-  insert into public.orders (
-    id, order_number, store_id, customer_id, customer_name,
-    items, subtotal, discount, delivery_fee, total, notes, agent_id
-  )
-  values (
-    p_id, p_order_number, p_store_id, p_customer_id, p_customer_name,
-    p_items, v_subtotal, coalesce(p_discount, 0), coalesce(p_delivery_fee, 0), v_total,
-    coalesce(p_notes, ''), nullif(p_agent_id, '')
-  );
+  insert into public.orders (id, order_number, store_id, customer_id, customer_name,
+                             items, subtotal, discount, delivery_fee, total, notes, agent_id)
+  values (p_id, v_number, p_store_id, p_customer_id, p_customer_name, p_items,
+          v_subtotal, coalesce(p_discount,0), coalesce(p_delivery_fee,0), v_total,
+          coalesce(p_notes,''), nullif(p_agent_id, ''));
 
   update public.products p
   set stock = p.stock - line.quantity,
       status = case when p.stock - line.quantity <= 0 then 'out_of_stock' else p.status end
-  from (
-    select item ->> 'productId' as product_id,
-           sum((item ->> 'quantity')::integer) as quantity
-    from jsonb_array_elements(p_items) as item
-    group by 1
-  ) as line
+  from (select item ->> 'productId' as product_id, sum((item ->> 'quantity')::integer) as quantity
+        from jsonb_array_elements(p_items) as item group by 1) as line
   where p.id = line.product_id;
 
   insert into public.stock_entries (id, product_id, store_id, kind, quantity, balance, note, order_id)
-  select
-    gen_random_uuid()::text,
-    p.id,
-    p.store_id,
-    'sale',
-    -line.quantity,
-    p.stock,
-    'طلب ' || p_order_number,
-    p_id
-  from (
-    select item ->> 'productId' as product_id,
-           sum((item ->> 'quantity')::integer) as quantity
-    from jsonb_array_elements(p_items) as item
-    group by 1
-  ) as line
+  select gen_random_uuid()::text, p.id, p.store_id, 'sale', -line.quantity, p.stock,
+         'طلب ' || v_number, p_id
+  from (select item ->> 'productId' as product_id, sum((item ->> 'quantity')::integer) as quantity
+        from jsonb_array_elements(p_items) as item group by 1) as line
   join public.products p on p.id = line.product_id
   where line.quantity <> 0;
+
+  return v_number;
 end;
 $$;
 
