@@ -15,7 +15,7 @@ const STAGGER_CAP = 8;
 const money = (value: number) => `${Math.round(value).toLocaleString('en-US')} د.ل`;
 
 export const Customers: React.FC<PagedProps> = ({ page, onPage }) => {
-  const { pickerCustomers } = useAppStore();
+  const { zones } = useAppStore();
   const [searchTerm, setSearchTerm] = useState('');
   const [city, setCity] = useState('');
   const [status, setStatus] = useState<Customer['status'] | 'all'>('all');
@@ -39,10 +39,10 @@ export const Customers: React.FC<PagedProps> = ({ page, onPage }) => {
     useDimension('customer', null, 1000).map(r => [r.key, { orderCount: r.order_count, totalSpent: r.revenue }]),
   );
 
-  // ponytail: the city filter is built from the picker slice (first 200 by name),
-  // so a city that only appears further down the table will not be offered yet.
-  const cities = [...new Set<string>(pickerCustomers.map(c => c.city).filter(Boolean))]
-    .sort((a, b) => a.localeCompare(b, 'ar'));
+  // Cities come from the delivery zones now, the same list the customer form
+  // writes from — so the filter offers every city a customer can have, not just
+  // the ones in the first 200 rows.
+  const cities = zones.map(zone => zone.name).sort((a, b) => a.localeCompare(b, 'ar'));
 
   const iconButton =
     'inline-flex items-center justify-center w-11 h-11 md:w-9 md:h-9 rounded-lg transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500';

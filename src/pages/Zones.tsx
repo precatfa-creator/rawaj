@@ -3,122 +3,19 @@ import { MapPin, Plus, Pencil, Trash2, Truck, Search } from 'lucide-react';
 import { motion } from 'motion/react';
 import { useAppStore } from '../store';
 import { matchesSearch } from '../lib/arabic';
-import { deleteZone, newId, saveZone, type ZoneDraft } from '../lib/mutations';
-import { Confirm, ErrorNote } from '../components/Confirm';
+import { deleteZone } from '../lib/mutations';
+import { Confirm } from '../components/Confirm';
 import { Combobox } from '../components/Combobox';
 import { BulkBar } from '../components/BulkBar';
+import { REGIONS, ZoneForm } from '../components/forms';
 import { zoneBulk } from '../lib/bulk';
-import { Field, Modal, fieldClass, ghostButton, primaryButton } from '../components/Modal';
 import { Card, EmptyState, Metric, PageHead, Pill, actionButton, count, money } from '../components/ui';
-import type { DeliveryZone, ZoneRegion } from '../types';
-
-const REGIONS: Record<ZoneRegion, { label: string; tone: string }> = {
-  tripolitania: { label: 'طرابلس', tone: 'bg-primary-50 text-primary-800 border-primary-200' },
-  cyrenaica: { label: 'برقة', tone: 'bg-violet-50 text-violet-800 border-violet-200' },
-  fezzan: { label: 'فزان', tone: 'bg-amber-50 text-amber-800 border-amber-200' },
-};
+import type { DeliveryZone } from '../types';
 
 const regionOptions = [
   { value: 'all', label: 'كل المناطق' },
   ...Object.entries(REGIONS).map(([value, { label }]) => ({ value, label })),
 ];
-
-const ZoneForm: React.FC<{ open: boolean; zone: DeliveryZone | null; onClose: () => void }> = ({ open, zone, onClose }) => {
-  const isNew = !zone;
-  const [draft, setDraft] = useState<ZoneDraft>({
-    id: '', code: '', name: '', region: 'tripolitania', capital: '', fee: 0, deliveryTimeDays: 3, active: true,
-  });
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState('');
-
-  const [seeded, setSeeded] = useState<string | null>(null);
-  const key = zone?.id ?? 'new';
-  if (open && seeded !== key) {
-    setSeeded(key);
-    setError('');
-    setDraft({
-      id: zone?.id ?? newId(),
-      code: zone?.code ?? '',
-      name: zone?.name ?? '',
-      region: zone?.region ?? 'tripolitania',
-      capital: zone?.capital ?? '',
-      fee: zone?.fee ?? 0,
-      deliveryTimeDays: zone?.deliveryTimeDays ?? 3,
-      active: zone?.active ?? true,
-    });
-  }
-  if (!open && seeded !== null) setSeeded(null);
-
-  const set = <K extends keyof ZoneDraft>(field: K, value: ZoneDraft[K]) =>
-    setDraft(current => ({ ...current, [field]: value }));
-
-  return (
-    <Modal
-      open={open}
-      title={isNew ? 'منطقة توصيل جديدة' : 'تعديل المنطقة'}
-      onClose={onClose}
-      footer={
-        <>
-          <button type="submit" form="zone-form" disabled={busy} className={primaryButton}>
-            {busy ? 'جارٍ الحفظ...' : isNew ? 'إضافة المنطقة' : 'حفظ التعديلات'}
-          </button>
-          <button type="button" onClick={onClose} className={ghostButton}>إلغاء</button>
-        </>
-      }
-    >
-      <form
-        id="zone-form"
-        className="space-y-4"
-        onSubmit={async event => {
-          event.preventDefault();
-          setBusy(true); setError('');
-          const result = await saveZone(draft, isNew);
-          setBusy(false);
-          if (result.ok) onClose(); else setError(result.message ?? '');
-        }}
-      >
-        <div className="grid grid-cols-1 sm:grid-cols-[8rem_1fr] gap-4">
-          <Field label="رقم المنطقة" hint={isNew ? 'يُرقَّم تلقائياً.' : undefined}>
-            <input
-              value={draft.code}
-              onChange={e => set('code', e.target.value)}
-              dir="ltr"
-              inputMode="numeric"
-              placeholder={isNew ? 'تلقائي' : ''}
-              className={`${fieldClass} text-center tabular-nums`}
-            />
-          </Field>
-          <Field label="اسم المنطقة">
-            <input value={draft.name} onChange={e => set('name', e.target.value)} required className={fieldClass} />
-          </Field>
-        </div>
-        <Combobox
-          showLabel
-          label="الإقليم"
-          value={draft.region}
-          onChange={value => set('region', value as ZoneRegion)}
-          options={Object.entries(REGIONS).map(([value, { label }]) => ({ value, label }))}
-        />
-        <Field label="المدينة الرئيسية">
-          <input value={draft.capital} onChange={e => set('capital', e.target.value)} className={fieldClass} />
-        </Field>
-        <div className="grid grid-cols-2 gap-4">
-          <Field label="رسوم التوصيل (د.ل)">
-            <input type="number" min={0} step="0.5" value={draft.fee} onChange={e => set('fee', Number(e.target.value))} className={fieldClass} />
-          </Field>
-          <Field label="مدة التوصيل (أيام)">
-            <input type="number" min={1} value={draft.deliveryTimeDays} onChange={e => set('deliveryTimeDays', Number(e.target.value))} className={fieldClass} />
-          </Field>
-        </div>
-        <label className="flex items-center gap-3 bg-surface-50 border border-surface-200 rounded-xl px-4 py-3 cursor-pointer">
-          <input type="checkbox" checked={draft.active} onChange={e => set('active', e.target.checked)} className="w-4 h-4 rounded border-surface-300 text-primary-700 focus:ring-primary-500" />
-          <span className="font-bold text-sm text-surface-800">التوصيل متاح لهذه المنطقة</span>
-        </label>
-        {error && <ErrorNote message={error} />}
-      </form>
-    </Modal>
-  );
-};
 
 export const Zones: React.FC = () => {
   const { zones, pickerCustomers: customers } = useAppStore();

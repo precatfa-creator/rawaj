@@ -161,6 +161,29 @@ export const deleteCustomer = (id: string) =>
     'تعذر حذف العميل. تأكد من عدم وجود طلبات مرتبطة به.',
   );
 
+// ---- categories ----
+
+/**
+ * Creates a category and returns its name, which is what `products.category`
+ * stores. An existing category with the same normalised spelling wins instead of
+ * erroring — the user asked for that category to exist, and it does.
+ */
+export const createCategory = async (name: string): Promise<string> => {
+  const trimmed = name.trim();
+  if (!trimmed) return '';
+
+  const { error } = await supabase.from('categories').insert({ id: newId(), name: trimmed });
+  if (!error) return trimmed;
+
+  if (`${error.message ?? ''}`.includes('duplicate key')) {
+    const { data } = await supabase.from('categories').select('name').ilike('name', trimmed).maybeSingle();
+    return (data?.name as string) ?? trimmed;
+  }
+
+  console.error('createCategory failed', error);
+  return '';
+};
+
 // ---- orders ----
 
 export interface OrderDraft {

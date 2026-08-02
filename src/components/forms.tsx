@@ -1,13 +1,14 @@
-import React, { FormEvent, useState } from 'react';
+import React, { FormEvent, useRef, useState } from 'react';
 import { Field, Modal, fieldClass, ghostButton, primaryButton } from './Modal';
 import { ErrorNote } from './Confirm';
 import { Combobox } from './Combobox';
 import { ImageUploader } from './ImageUploader';
+import { useAppStore } from '../store';
 import {
-  newId, saveCustomer, saveProduct, saveStore,
-  type CustomerDraft, type ProductDraft, type WriteResult,
+  createCategory, newId, saveCustomer, saveProduct, saveStore, saveZone,
+  type CustomerDraft, type ProductDraft, type WriteResult, type ZoneDraft,
 } from '../lib/mutations';
-import type { Customer, Product, Store } from '../types';
+import type { Customer, DeliveryZone, Product, Store, ZoneRegion } from '../types';
 
 /** Shared submit plumbing: pending state, and a failure the user can read. */
 const useSubmit = (onDone: () => void) => {
@@ -35,6 +36,130 @@ const Footer: React.FC<{ busy: boolean; onCancel: () => void; label: string }> =
     <button type="button" onClick={onCancel} className={ghostButton}>إلغاء</button>
   </>
 );
+
+// ---- delivery zone ----
+
+export const REGIONS: Record<ZoneRegion, { label: string; tone: string }> = {
+  tripolitania: { label: 'طرابلس', tone: 'bg-primary-50 text-primary-800 border-primary-200' },
+  cyrenaica: { label: 'برقة', tone: 'bg-violet-50 text-violet-800 border-violet-200' },
+  fezzan: { label: 'فزان', tone: 'bg-amber-50 text-amber-800 border-amber-200' },
+};
+
+/**
+ * Lives here rather than on the zones page because the customer form opens it
+ * too: a customer's city is a zone, and the zone you need is the one that does
+ * not exist yet.
+ *
+ * Its form id is `zone-form`, not the `entity-form` the other three share — when
+ * this opens on top of the customer dialog, two forms answering to the same id
+ * would send the outer dialog's submit button to whichever the DOM found first.
+ */
+export const ZoneForm: React.FC<{
+  open: boolean;
+  zone: DeliveryZone | null;
+  onClose: () => void;
+  /** Given the saved zone's name, so a caller can select what it just created. */
+  onCreated?: (name: string) => void;
+  /** Prefills the name when opened straight from a search that found nothing. */
+  initialName?: string;
+}> = ({ open, zone, onClose, onCreated, initialName = '' }) => {
+  const isNew = !zone;
+  const [draft, setDraft] = useState<ZoneDraft>({
+    id: '', code: '', name: '', region: 'tripolitania', capital: '', fee: 0, deliveryTimeDays: 3, active: true,
+  });
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+
+  const [seeded, setSeeded] = useState<string | null>(null);
+  const key = zone?.id ?? `new:${initialName}`;
+  if (open && seeded !== key) {
+    setSeeded(key);
+    setError('');
+    setDraft({
+      id: zone?.id ?? newId(),
+      code: zone?.code ?? '',
+      name: zone?.name ?? initialName,
+      region: zone?.region ?? 'tripolitania',
+      capital: zone?.capital ?? '',
+      fee: zone?.fee ?? 0,
+      deliveryTimeDays: zone?.deliveryTimeDays ?? 3,
+      active: zone?.active ?? true,
+    });
+  }
+  if (!open && seeded !== null) setSeeded(null);
+
+  const set = <K extends keyof ZoneDraft>(field: K, value: ZoneDraft[K]) =>
+    setDraft(current => ({ ...current, [field]: value }));
+
+  return (
+    <Modal
+      open={open}
+      title={isNew ? 'منطقة توصيل جديدة' : 'تعديل المنطقة'}
+      onClose={onClose}
+      footer={
+        <>
+          <button type="submit" form="zone-form" disabled={busy} className={primaryButton}>
+            {busy ? 'جارٍ الحفظ...' : isNew ? 'إضافة المنطقة' : 'حفظ التعديلات'}
+          </button>
+          <button type="button" onClick={onClose} className={ghostButton}>إلغاء</button>
+        </>
+      }
+    >
+      <form
+        id="zone-form"
+        className="space-y-4"
+        onSubmit={async event => {
+          event.preventDefault();
+          setBusy(true); setError('');
+          const result = await saveZone(draft, isNew);
+          setBusy(false);
+          if (!result.ok) { setError(result.message ?? ''); return; }
+          if (isNew) onCreated?.(draft.name.trim());
+          onClose();
+        }}
+      >
+        <div className="grid grid-cols-1 sm:grid-cols-[8rem_1fr] gap-4">
+          <Field label="رقم المنطقة" hint={isNew ? 'يُرقَّم تلقائياً.' : undefined}>
+            <input
+              value={draft.code}
+              onChange={e => set('code', e.target.value)}
+              dir="ltr"
+              inputMode="numeric"
+              placeholder={isNew ? 'تلقائي' : ''}
+              className={`${fieldClass} text-center tabular-nums`}
+            />
+          </Field>
+          <Field label="اسم المنطقة">
+            <input value={draft.name} onChange={e => set('name', e.target.value)} required className={fieldClass} />
+          </Field>
+        </div>
+        <Combobox
+          showLabel
+          label="الإقليم"
+          value={draft.region}
+          onChange={value => set('region', value as ZoneRegion)}
+          options={Object.entries(REGIONS).map(([value, { label }]) => ({ value, label }))}
+        />
+        <Field label="المدينة الرئيسية">
+          <input value={draft.capital} onChange={e => set('capital', e.target.value)} className={fieldClass} />
+        </Field>
+        <div className="grid grid-cols-2 gap-4">
+          <Field label="رسوم التوصيل (د.ل)">
+            <input type="number" min={0} step="0.5" value={draft.fee} onChange={e => set('fee', Number(e.target.value))} className={fieldClass} />
+          </Field>
+          <Field label="مدة التوصيل (أيام)">
+            <input type="number" min={1} value={draft.deliveryTimeDays} onChange={e => set('deliveryTimeDays', Number(e.target.value))} className={fieldClass} />
+          </Field>
+        </div>
+        <label className="flex items-center gap-3 bg-surface-50 border border-surface-200 rounded-xl px-4 py-3 cursor-pointer">
+          <input type="checkbox" checked={draft.active} onChange={e => set('active', e.target.checked)} className="w-4 h-4 rounded border-surface-300 text-primary-700 focus:ring-primary-500" />
+          <span className="font-bold text-sm text-surface-800">التوصيل متاح لهذه المنطقة</span>
+        </label>
+        {error && <ErrorNote message={error} />}
+      </form>
+    </Modal>
+  );
+};
 
 // ---- store ----
 
@@ -103,6 +228,7 @@ export const ProductForm: React.FC<{
   open: boolean; product: Product | null; storeId: string; onClose: () => void;
 }> = ({ open, product, storeId, onClose }) => {
   const isNew = !product;
+  const { categories } = useAppStore();
   const [draft, setDraft] = useState<ProductDraft>({
     id: '', storeId, name: '', description: '', sku: '', defaultSerial: '', category: '',
     purchasePrice: 0, sellingPrice: 0, stock: 0, minStock: 0, status: 'active', images: [],
@@ -136,6 +262,11 @@ export const ProductForm: React.FC<{
 
   const margin = draft.sellingPrice - draft.purchasePrice;
 
+  // An item saved before its category was deleted still shows its own value,
+  // rather than silently reading as "no category".
+  const categoryOptions = [...new Set([...categories, draft.category].filter(Boolean))]
+    .map(name => ({ value: name, label: name }));
+
   return (
     <Modal
       open={open}
@@ -156,9 +287,18 @@ export const ProductForm: React.FC<{
         <Field label="الرقم التسلسلي الافتراضي" hint="يُستخدم عند عدم تسجيل رقم خاص بالقطعة.">
           <input value={draft.defaultSerial} onChange={e => set('defaultSerial', e.target.value)} dir="ltr" className={fieldClass} />
         </Field>
-        <Field label="الفئة">
-          <input value={draft.category} onChange={e => set('category', e.target.value)} className={fieldClass} />
-        </Field>
+        {/* The value written is the category *name*: products.category stays a
+            text column, which is what order_lines and the reports group on. */}
+        <Combobox
+          showLabel
+          label="الفئة"
+          value={draft.category}
+          onChange={value => set('category', value)}
+          options={categoryOptions}
+          onCreate={createCategory}
+          createLabel={term => `إضافة فئة "${term}"`}
+          placeholder="اختر فئة…"
+        />
         <Field label="سعر الشراء (د.ل)">
           <input type="number" min={0} step="0.01" value={draft.purchasePrice} onChange={e => set('purchasePrice', Number(e.target.value))} required className={fieldClass} />
         </Field>
@@ -219,10 +359,13 @@ export const CustomerForm: React.FC<{
   open: boolean; customer: Customer | null; onClose: () => void;
 }> = ({ open, customer, onClose }) => {
   const isNew = !customer;
+  const { zones } = useAppStore();
   const [draft, setDraft] = useState<CustomerDraft>({
     id: '', name: '', phone: '', whatsapp: '', city: '', address: '', status: 'active',
   });
   const { busy, error, submit } = useSubmit(onClose);
+  const [newZoneName, setNewZoneName] = useState<string | null>(null);
+  const zoneResolver = useRef<((name: string | null) => void) | null>(null);
 
   const [seeded, setSeeded] = useState<string | null>(null);
   const key = customer?.id ?? 'new';
@@ -242,6 +385,37 @@ export const CustomerForm: React.FC<{
 
   const set = <K extends keyof CustomerDraft>(field: K, value: CustomerDraft[K]) =>
     setDraft(current => ({ ...current, [field]: value }));
+
+  // A customer saved before their zone was renamed keeps showing their own city
+  // rather than reading as blank.
+  const cityOptions = [
+    ...zones.map(zone => ({
+      value: zone.name,
+      label: zone.name,
+      hint: `${zone.code}${zone.capital ? ` · ${zone.capital}` : ''}`,
+    })),
+    ...(draft.city && !zones.some(zone => zone.name === draft.city)
+      ? [{ value: draft.city, label: draft.city, hint: 'خارج مناطق التوصيل' }]
+      : []),
+  ];
+
+  /**
+   * Opens the zone dialog and does not settle until it closes, so the combobox
+   * can select the zone that was just created — or carry on unchanged if the
+   * user backed out. `null` means "handled here", so a cancel is not reported as
+   * a failure.
+   */
+  const openZoneForm = (term: string) =>
+    new Promise<string | null>(resolve => {
+      zoneResolver.current = resolve;
+      setNewZoneName(term);
+    });
+
+  const settleZoneForm = (name: string | null) => {
+    zoneResolver.current?.(name);
+    zoneResolver.current = null;
+    setNewZoneName(null);
+  };
 
   return (
     <Modal
@@ -263,9 +437,19 @@ export const CustomerForm: React.FC<{
         <Field label="واتساب">
           <input value={draft.whatsapp} onChange={e => set('whatsapp', e.target.value)} dir="ltr" type="tel" inputMode="tel" className={fieldClass} />
         </Field>
-        <Field label="المدينة">
-          <input value={draft.city} onChange={e => set('city', e.target.value)} className={fieldClass} />
-        </Field>
+        {/* The city IS a delivery zone — that link is what lets an order prefill
+            its delivery fee. The value stored stays the zone name, because
+            order_lines and the city report group on customers.city as text. */}
+        <Combobox
+          showLabel
+          label="المدينة"
+          value={draft.city}
+          onChange={value => set('city', value)}
+          options={cityOptions}
+          onCreate={openZoneForm}
+          createLabel={term => `إضافة منطقة "${term}"`}
+          placeholder="اختر منطقة…"
+        />
         <Combobox
           showLabel
           label="التصنيف"
@@ -284,6 +468,17 @@ export const CustomerForm: React.FC<{
         </div>
         {error && <div className="sm:col-span-2"><ErrorNote message={error} /></div>}
       </form>
+
+      {/* Rendered inside this dialog so its own combobox popup escapes to the
+          right layer: a <dialog> opened with showModal() sits in the browser's
+          top layer, and anything portaled to <body> paints underneath it. */}
+      <ZoneForm
+        open={newZoneName !== null}
+        zone={null}
+        initialName={newZoneName ?? ''}
+        onCreated={name => settleZoneForm(name)}
+        onClose={() => settleZoneForm(null)}
+      />
     </Modal>
   );
 };

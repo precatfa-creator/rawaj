@@ -1,6 +1,6 @@
 import React, { useEffect, useId, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { Check, ChevronDown, Search } from 'lucide-react';
+import { Check, ChevronDown, Plus, Search } from 'lucide-react';
 import { matchesSearch } from '../lib/arabic';
 
 export interface Option {
@@ -29,6 +29,18 @@ interface ComboboxProps {
   size?: 'md' | 'sm';
   /** Applied to the closed button, e.g. a status colour. */
   tone?: string;
+  /**
+   * Offered when the typed term matches nothing. Returns the value to select,
+   * `''` if creation failed, or `null` when the caller handled the outcome
+   * itself — a cancelled dialog is not an error and must not be reported as one.
+   *
+   * Shown only in the no-results branch on purpose: the common case is picking
+   * something that exists, and a create button competing with the list would
+   * make the rare case louder than the normal one.
+   */
+  onCreate?: (term: string) => Promise<string | null>;
+  /** Label for that button; receives the typed term. */
+  createLabel?: (term: string) => string;
 }
 
 /**
@@ -38,7 +50,7 @@ interface ComboboxProps {
  */
 export const Combobox: React.FC<ComboboxProps> = ({
   value, onChange, options, onSearch, label, placeholder = 'اختر…', showLabel, disabled,
-  className = '', size = 'md', tone,
+  className = '', size = 'md', tone, onCreate, createLabel,
 }) => {
   const id = useId();
   const [open, setOpen] = useState(false);
@@ -52,6 +64,8 @@ export const Combobox: React.FC<ComboboxProps> = ({
 
   const [remote, setRemote] = useState<Option[]>([]);
   const [searching, setSearching] = useState(false);
+  const [creating, setCreating] = useState(false);
+  const [createError, setCreateError] = useState('');
 
   // Debounced server lookup; local filtering stays the default.
   useEffect(() => {
@@ -116,6 +130,27 @@ export const Combobox: React.FC<ComboboxProps> = ({
   const close = () => {
     setOpen(false);
     setQuery('');
+    setCreateError('');
+    anchorRef.current?.focus();
+  };
+
+  /**
+   * Creates the missing record and selects it, so the user lands back in the
+   * form with the thing they wanted already chosen rather than having to find
+   * it again.
+   */
+  const create = async () => {
+    const term = query.trim();
+    if (!onCreate || !term || creating) return;
+    setCreating(true);
+    setCreateError('');
+    const created = await onCreate(term);
+    setCreating(false);
+    if (created === null) return; // cancelled, or reported by the caller's own UI
+    if (!created) { setCreateError('تعذر الإنشاء. حاول مرة أخرى.'); return; }
+    onChange(created);
+    setOpen(false);
+    setQuery('');
     anchorRef.current?.focus();
   };
 
@@ -141,7 +176,10 @@ export const Combobox: React.FC<ComboboxProps> = ({
     } else if (event.key === 'Enter') {
       event.preventDefault();
       const option = filtered[activeIndex];
+      // Enter on an empty list creates, so typing a new name and pressing Enter
+      // does the obvious thing without reaching for the mouse.
       if (option) commit(option);
+      else void create();
     }
   };
 
@@ -218,8 +256,22 @@ export const Combobox: React.FC<ComboboxProps> = ({
 
           <ul ref={listRef} id={`${id}-listbox`} role="listbox" aria-label={label} className="max-h-60 overflow-y-auto p-1.5">
             {filtered.length === 0 && (
-              <li className="px-3 py-6 text-center text-sm text-surface-500">
-                {searching ? 'جارٍ البحث…' : 'لا توجد نتائج'}
+              <li role="none" className="px-3 py-4 text-center text-sm text-surface-500">
+                <p>{searching ? 'جارٍ البحث…' : 'لا توجد نتائج'}</p>
+                {onCreate && !searching && query.trim() !== '' && (
+                  <button
+                    type="button"
+                    onClick={() => void create()}
+                    disabled={creating}
+                    className="mt-3 w-full inline-flex items-center justify-center gap-2 rounded-xl bg-primary-700 hover:bg-primary-800 disabled:opacity-60 text-white font-bold text-sm px-3 py-2.5 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500"
+                  >
+                    <Plus size={16} />
+                    {creating
+                      ? 'جارٍ الإنشاء…'
+                      : (createLabel ?? (term => `إضافة "${term}"`))(query.trim())}
+                  </button>
+                )}
+                {createError && <p className="mt-2 text-rose-700 font-bold">{createError}</p>}
               </li>
             )}
             {filtered.map((option, index) => {
