@@ -81,7 +81,8 @@ const DATABASE_TOOL: NonNullable<ChatOptions['tools']>[number] = {
   },
 };
 
-const newId = () => `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+// Same generator the rest of the app uses; these only key React lists.
+const newId = () => crypto.randomUUID();
 
 const initialMessage = (activeStoreName?: string): DisplayMessage => ({
   id: newId(),
@@ -286,6 +287,18 @@ export const AdminDatabaseChat: React.FC<AdminDatabaseChatProps> = ({ stores, ac
         }
       }
 
+      // The loop can run out while the model is still asking for tools, leaving
+      // its last turn unanswered and its content empty. One more call with no
+      // tools offered forces it to answer from what it already has, instead of
+      // the user getting a generic apology after four successful queries.
+      if (response?.message?.tool_calls?.length) {
+        response = await puter.ai.chat(requestMessages, {
+          model: MODEL,
+          temperature: 0.2,
+          max_tokens: 900,
+        }) as ChatResponse;
+      }
+
       const answer = asText(response?.message?.content);
       setMessages(current => [
         ...current,
@@ -323,7 +336,7 @@ export const AdminDatabaseChat: React.FC<AdminDatabaseChatProps> = ({ stores, ac
               <h2 className="truncate font-black">مساعد بيانات رَوَاج</h2>
               <p className="flex items-center gap-1 text-xs text-primary-100">
                 <ShieldCheck size={13} />
-                للمدير فقط · قراءة آمنة
+                للمدير فقط · قراءة فقط · يُرسل البيانات لمزوّد خارجي
               </p>
             </div>
             <button
@@ -410,8 +423,13 @@ export const AdminDatabaseChat: React.FC<AdminDatabaseChatProps> = ({ stores, ac
                 {isSending ? <LoaderCircle size={18} className="animate-spin" /> : <Send size={18} />}
               </button>
             </div>
+            {/* The old wording — "does not show contact details" — was true and
+                incomplete. Sales figures and customer names do leave the
+                system, and the admin deciding to use this deserves to know
+                that, not just what is withheld. */}
             <p className="mt-2 text-center text-[11px] leading-4 text-surface-400">
-              يستخدم Puter بحسابك. لا يغيّر البيانات ولا يعرض معلومات الاتصال.
+              تُرسَل أرقام المبيعات وأسماء العملاء إلى Puter ومزوّد الذكاء الاصطناعي لديه.
+              لا تُرسَل أرقام الهاتف أو العناوين أو الملاحظات، ولا يمكن للمساعد تعديل أي بيانات.
             </p>
           </form>
         </section>
