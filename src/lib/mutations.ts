@@ -1,5 +1,7 @@
 import { supabase } from '../db/supabase';
-import type { Customer, DeliveryZone, OrderItem, OrderStatus, Product, StockKind, Store } from '../types';
+import type {
+  Customer, DeliveryZone, OrderItem, OrderStatus, Product, SalesRep, StockKind, Store,
+} from '../types';
 import { orderTotals } from './orderMath';
 import { deleteProductImages } from './storage';
 import { trimRow } from './text';
@@ -196,6 +198,7 @@ export interface OrderDraft {
   discount: number;
   deliveryFee: number;
   notes: string;
+  agentId: string;
 }
 
 /**
@@ -214,6 +217,7 @@ export const createOrder = async (draft: OrderDraft): Promise<WriteResult> => {
     p_discount: draft.discount,
     p_delivery_fee: draft.deliveryFee,
     p_notes: draft.notes.trim(),
+    p_agent_id: draft.agentId || null,
   });
 
   if (!error) return ok;
@@ -228,6 +232,43 @@ export const createOrder = async (draft: OrderDraft): Promise<WriteResult> => {
   if (raw.includes('duplicate key')) return fail('رقم الطلب مستخدم بالفعل. أعد المحاولة.');
   return fail('تعذر إنشاء الطلب.');
 };
+
+// ---- sales representatives ----
+
+export type SalesRepDraft = Pick<
+  SalesRep, 'id' | 'name' | 'phone' | 'whatsapp' | 'zone' | 'commission' | 'active' | 'note'
+>;
+
+const salesRepRow = (draft: SalesRepDraft) => trimRow({
+  name: draft.name,
+  phone: draft.phone,
+  whatsapp: draft.whatsapp,
+  zone: draft.zone,
+  commission: draft.commission,
+  active: draft.active,
+  note: draft.note,
+});
+
+export const saveSalesRep = (draft: SalesRepDraft, isNew: boolean) =>
+  run(
+    isNew
+      ? supabase.from('sales_reps').insert({ id: draft.id, ...salesRepRow(draft) })
+      : supabase.from('sales_reps').update(salesRepRow(draft)).eq('id', draft.id),
+    isNew ? 'تعذر إضافة المندوب.' : 'تعذر حفظ تعديلات المندوب.',
+  );
+
+/**
+ * Orders keep their history: the foreign key is ON DELETE SET NULL, so deleting
+ * a rep detaches their orders rather than taking them along.
+ */
+export const deleteSalesRep = (id: string) =>
+  run(supabase.from('sales_reps').delete().eq('id', id), 'تعذر حذف المندوب.');
+
+export const setOrderAgent = (orderIds: string[], agentId: string | null) =>
+  run(
+    supabase.from('orders').update({ agent_id: agentId }).in('id', orderIds),
+    'تعذر إسناد الطلب إلى المندوب.',
+  );
 
 // ---- delivery zones ----
 

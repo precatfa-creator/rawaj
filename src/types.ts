@@ -117,6 +117,20 @@ export interface Expense {
   storeId?: string;
 }
 
+export interface SalesRep {
+  id: string;
+  name: string;
+  phone: string;
+  whatsapp: string;
+  /** Delivery zone name covered, matching DeliveryZone.name. Empty = all zones. */
+  zone: string;
+  /** Flat amount earned per delivered order. */
+  commission: number;
+  active: boolean;
+  note: string;
+  createdAt: string;
+}
+
 export type UserRole = 'admin' | 'user';
 
 export interface Profile {

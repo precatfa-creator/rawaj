@@ -28,7 +28,7 @@ const statusStyles: Record<OrderStatus, string> = {
 const money = (value: number) => `${Math.round(value).toLocaleString('en-US')} د.ل`;
 
 export const Orders: React.FC<PagedProps> = ({ page, onPage }) => {
-  const { stores, pickerProducts, pickerCustomers, zones, activeStoreId } = useAppStore();
+  const { stores, pickerProducts, pickerCustomers, zones, salesReps, activeStoreId } = useAppStore();
   const [activeFilter, setActiveFilter] = useState<OrderStatus | 'all'>('all');
   const [searchTerm, setSearchTerm] = useState('');
   const [sort, setSort] = useState<'newest' | 'oldest'>('newest');
@@ -308,7 +308,11 @@ export const Orders: React.FC<PagedProps> = ({ page, onPage }) => {
         <Pagination page={page} total={list.total} pageSize={PAGE_SIZE} onPage={onPage} loading={list.loading} />
       </div>
 
-      <OrderDetails order={visibleOrders.find(o => o.id === detailsId) ?? null} onClose={() => setDetailsId(null)} />
+      <OrderDetails
+        order={visibleOrders.find(o => o.id === detailsId) ?? null}
+        salesReps={salesReps}
+        onClose={() => setDetailsId(null)}
+      />
 
       <OrderForm
         open={creating}
@@ -317,6 +321,7 @@ export const Orders: React.FC<PagedProps> = ({ page, onPage }) => {
         customers={pickerCustomers}
         orders={visibleOrders}
         zones={zones}
+        salesReps={salesReps}
         onClose={() => setCreating(false)}
       />
 

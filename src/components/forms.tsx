@@ -5,10 +5,10 @@ import { Combobox } from './Combobox';
 import { ImageUploader } from './ImageUploader';
 import { useAppStore } from '../store';
 import {
-  createCategory, newId, saveCustomer, saveProduct, saveStore, saveZone,
-  type CustomerDraft, type ProductDraft, type WriteResult, type ZoneDraft,
+  createCategory, newId, saveCustomer, saveProduct, saveSalesRep, saveStore, saveZone,
+  type CustomerDraft, type ProductDraft, type SalesRepDraft, type WriteResult, type ZoneDraft,
 } from '../lib/mutations';
-import type { Customer, DeliveryZone, Product, Store, ZoneRegion } from '../types';
+import type { Customer, DeliveryZone, Product, SalesRep, Store, ZoneRegion } from '../types';
 
 /** Shared submit plumbing: pending state, and a failure the user can read. */
 const useSubmit = (onDone: () => void) => {
@@ -346,6 +346,98 @@ export const ProductForm: React.FC<{
           <Field label="الوصف">
             <textarea value={draft.description} onChange={e => set('description', e.target.value)} rows={3} className={fieldClass} />
           </Field>
+        </div>
+        {error && <div className="sm:col-span-2"><ErrorNote message={error} /></div>}
+      </form>
+    </Modal>
+  );
+};
+
+// ---- sales representative ----
+
+export const SalesRepForm: React.FC<{
+  open: boolean; rep: SalesRep | null; onClose: () => void;
+}> = ({ open, rep, onClose }) => {
+  const isNew = !rep;
+  const { zones } = useAppStore();
+  const [draft, setDraft] = useState<SalesRepDraft>({
+    id: '', name: '', phone: '', whatsapp: '', zone: '', commission: 0, active: true, note: '',
+  });
+  const { busy, error, submit } = useSubmit(onClose);
+
+  const [seeded, setSeeded] = useState<string | null>(null);
+  const key = rep?.id ?? 'new';
+  if (open && seeded !== key) {
+    setSeeded(key);
+    setDraft({
+      id: rep?.id ?? newId(),
+      name: rep?.name ?? '',
+      phone: rep?.phone ?? '',
+      whatsapp: rep?.whatsapp ?? '',
+      zone: rep?.zone ?? '',
+      commission: rep?.commission ?? 0,
+      active: rep?.active ?? true,
+      note: rep?.note ?? '',
+    });
+  }
+  if (!open && seeded !== null) setSeeded(null);
+
+  const set = <K extends keyof SalesRepDraft>(field: K, value: SalesRepDraft[K]) =>
+    setDraft(current => ({ ...current, [field]: value }));
+
+  const zoneOptions = [
+    { value: '', label: 'كل المناطق' },
+    ...zones.map(zone => ({ value: zone.name, label: zone.name, hint: zone.code })),
+  ];
+
+  return (
+    <Modal
+      open={open}
+      wide
+      title={isNew ? 'مندوب جديد' : 'تعديل المندوب'}
+      onClose={onClose}
+      footer={<Footer busy={busy} onCancel={onClose} label={isNew ? 'إضافة المندوب' : 'حفظ التعديلات'} />}
+    >
+      <form id="entity-form" className="grid grid-cols-1 sm:grid-cols-2 gap-4" onSubmit={submit(() => saveSalesRep(draft, isNew))}>
+        <div className="sm:col-span-2">
+          <Field label="الاسم">
+            <input value={draft.name} onChange={e => set('name', e.target.value)} required className={fieldClass} />
+          </Field>
+        </div>
+        <Field label="رقم الهاتف">
+          <input value={draft.phone} onChange={e => set('phone', e.target.value)} dir="ltr" type="tel" inputMode="tel" className={fieldClass} />
+        </Field>
+        <Field label="واتساب">
+          <input value={draft.whatsapp} onChange={e => set('whatsapp', e.target.value)} dir="ltr" type="tel" inputMode="tel" className={fieldClass} />
+        </Field>
+        <Combobox
+          showLabel
+          label="منطقة التغطية"
+          value={draft.zone}
+          onChange={value => set('zone', value)}
+          options={zoneOptions}
+        />
+        <Field label="العمولة لكل طلب مسلَّم (د.ل)">
+          <input
+            type="number" min={0} step="0.5" value={draft.commission}
+            onChange={e => set('commission', Number(e.target.value))}
+            className={fieldClass}
+          />
+        </Field>
+        <div className="sm:col-span-2">
+          <Field label="ملاحظات">
+            <input value={draft.note} onChange={e => set('note', e.target.value)} className={fieldClass} />
+          </Field>
+        </div>
+        <div className="sm:col-span-2">
+          <label className="flex items-center gap-3 bg-surface-50 border border-surface-200 rounded-xl px-4 py-3 cursor-pointer">
+            <input
+              type="checkbox" checked={draft.active}
+              onChange={e => set('active', e.target.checked)}
+              className="w-4 h-4 rounded border-surface-300 text-primary-700 focus:ring-primary-500"
+            />
+            <span className="font-bold text-sm text-surface-800">المندوب على رأس العمل</span>
+          </label>
         </div>
         {error && <div className="sm:col-span-2"><ErrorNote message={error} /></div>}
       </form>

@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useEffect, useState, ReactNode } from 'react';
 import { AlertCircle, RefreshCw } from 'lucide-react';
-import { Store, Product, Customer, DeliveryZone } from '../types';
+import { Store, Product, Customer, DeliveryZone, SalesRep } from '../types';
 import { supabase } from '../db/supabase';
 
 /**
@@ -19,6 +19,7 @@ interface AppState {
   zones: DeliveryZone[];
   /** Category names, for the item picker. Small and bounded, so it lives here. */
   categories: string[];
+  salesReps: SalesRep[];
   pickerProducts: Product[];
   pickerCustomers: Customer[];
   /** True when a picker list was truncated at PICKER_LIMIT. */
@@ -35,6 +36,7 @@ const AppContext = createContext<AppState | undefined>(undefined);
 const storeColumns = 'id,name,image,facebookPage:facebook_page,productCount:product_count,customerCount:customer_count,orderCount:order_count,totalProfit:total_profit,lastActivity:last_activity';
 const zoneColumns = 'id,code,name,region,capital,areaKm2:area_km2,fee,deliveryTimeDays:delivery_time_days,active';
 const productColumns = 'id,storeId:store_id,name,description,images,purchasePrice:purchase_price,sellingPrice:selling_price,margin,sku,barcode,brand,provider,category,defaultSerial:default_serial,colors,sizes,stock,minStock:min_stock,status,addedAt:added_at,salesCount:sales_count';
+const salesRepColumns = 'id,name,phone,whatsapp,zone,commission,active,note,createdAt:created_at';
 const customerColumns = 'id,name,phone,whatsapp,city,address,orderCount:order_count,totalSpent:total_spent,lastPurchase:last_purchase,rating,status';
 
 const resourceLabels: Record<string, string> = {
@@ -43,12 +45,14 @@ const resourceLabels: Record<string, string> = {
   customers: 'العملاء',
   delivery_zones: 'مناطق التوصيل',
   categories: 'الفئات',
+  sales_reps: 'المندوبين',
 };
 
 export const AppProvider = ({ children }: { children: ReactNode }) => {
   const [stores, setStores] = useState<Store[]>([]);
   const [zones, setZones] = useState<DeliveryZone[]>([]);
   const [categories, setCategories] = useState<string[]>([]);
+  const [salesReps, setSalesReps] = useState<SalesRep[]>([]);
   const [pickerProducts, setPickerProducts] = useState<Product[]>([]);
   const [pickerCustomers, setPickerCustomers] = useState<Customer[]>([]);
   const [pickersTruncated, setPickersTruncated] = useState(false);
@@ -89,6 +93,13 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
       if (active) setCategories((data ?? []).map(row => row.name as string));
     };
 
+    const loadSalesReps = async () => {
+      const { data, error } = await supabase.from('sales_reps').select(salesRepColumns).order('name');
+      if (error) return reportError('sales_reps', error);
+      reportSuccess('sales_reps');
+      if (active) setSalesReps((data ?? []) as unknown as SalesRep[]);
+    };
+
     const loadPickers = async () => {
       const [products, customers] = await Promise.all([
         supabase.from('products').select(productColumns).order('name').limit(PICKER_LIMIT),
@@ -106,7 +117,7 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
 
     const loadAll = async () => {
       setLoading(true);
-      await Promise.all([loadStores(), loadZones(), loadCategories(), loadPickers()]);
+      await Promise.all([loadStores(), loadZones(), loadCategories(), loadSalesReps(), loadPickers()]);
       if (active) setLoading(false);
     };
 
@@ -117,6 +128,7 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
       .on('postgres_changes', { event: '*', schema: 'public', table: 'stores' }, () => void loadStores())
       .on('postgres_changes', { event: '*', schema: 'public', table: 'delivery_zones' }, () => void loadZones())
       .on('postgres_changes', { event: '*', schema: 'public', table: 'categories' }, () => void loadCategories())
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'sales_reps' }, () => void loadSalesReps())
       .on('postgres_changes', { event: '*', schema: 'public', table: 'products' }, () => void loadPickers())
       .on('postgres_changes', { event: '*', schema: 'public', table: 'customers' }, () => void loadPickers())
       .subscribe();
@@ -131,7 +143,7 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
 
   return (
     <AppContext.Provider value={{
-      stores, zones, categories, pickerProducts, pickerCustomers, pickersTruncated,
+      stores, zones, categories, salesReps, pickerProducts, pickerCustomers, pickersTruncated,
       activeStoreId, setActiveStore: setActiveStoreId, loading, failedResources, reload,
     }}>
       {loading ? (

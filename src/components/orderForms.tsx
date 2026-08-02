@@ -6,7 +6,7 @@ import { Combobox } from './Combobox';
 import { createOrder, newId, orderTotals } from '../lib/mutations';
 import { statusLabels } from '../lib/dashboardStats';
 import { searchOptions } from '../lib/queries';
-import type { Customer, DeliveryZone, Order, OrderItem, Product } from '../types';
+import type { Customer, DeliveryZone, Order, OrderItem, Product, SalesRep } from '../types';
 
 const money = (value: number) => `${Math.round(value).toLocaleString('en-US')} د.ل`;
 
@@ -17,14 +17,16 @@ export const OrderForm: React.FC<{
   customers: Customer[];
   orders: Order[];
   zones: DeliveryZone[];
+  salesReps: SalesRep[];
   onClose: () => void;
-}> = ({ open, storeId, products, customers, orders, zones, onClose }) => {
+}> = ({ open, storeId, products, customers, orders, zones, salesReps, onClose }) => {
   const [customerId, setCustomerId] = useState('');
   const [items, setItems] = useState<OrderItem[]>([]);
   const [discount, setDiscount] = useState(0);
   const [deliveryFee, setDeliveryFee] = useState(0);
   const [notes, setNotes] = useState('');
   const [zoneId, setZoneId] = useState('');
+  const [agentId, setAgentId] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
 
@@ -37,12 +39,21 @@ export const OrderForm: React.FC<{
     setDeliveryFee(0);
     setNotes('');
     setZoneId('');
+    setAgentId('');
     setError('');
   }
   if (!open && seeded) setSeeded(false);
 
   const { subtotal, total } = orderTotals(items, discount, deliveryFee);
   const customer = customers.find(c => c.id === customerId);
+
+  // Reps covering the chosen zone come first; a rep with no zone covers all of
+  // them, and the rest stay selectable rather than disappearing.
+  const zoneName = zones.find(z => z.id === zoneId)?.name ?? '';
+  const covers = (rep: SalesRep) => !rep.zone || !zoneName || rep.zone === zoneName;
+  const agentOptions = salesReps
+    .filter(rep => rep.active)
+    .sort((a, b) => Number(covers(b)) - Number(covers(a)));
 
   const addItem = async (productId: string) => {
     // The picker can return a product outside the preloaded slice, so fall back
@@ -91,6 +102,7 @@ export const OrderForm: React.FC<{
       discount,
       deliveryFee,
       notes: notes.trim(),
+      agentId,
     });
     setBusy(false);
     if (result.ok) onClose();
@@ -204,6 +216,22 @@ export const OrderForm: React.FC<{
           placeholder="اختر منطقة لتعبئة الرسوم"
         />
 
+        <Combobox
+          showLabel
+          label="المندوب"
+          value={agentId}
+          onChange={setAgentId}
+          options={[
+            { value: '', label: 'بدون مندوب' },
+            ...agentOptions.map(rep => ({
+              value: rep.id,
+              label: rep.name,
+              hint: rep.zone || 'كل المناطق',
+            })),
+          ]}
+          placeholder="اختر مندوباً"
+        />
+
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
           <Field label="الخصم (د.ل)">
             <input type="number" min={0} step="0.01" value={discount} onChange={e => setDiscount(Number(e.target.value))} className={fieldClass} />
@@ -230,7 +258,9 @@ export const OrderForm: React.FC<{
   );
 };
 
-export const OrderDetails: React.FC<{ order: Order | null; onClose: () => void }> = ({ order, onClose }) => (
+export const OrderDetails: React.FC<{
+  order: Order | null; salesReps: SalesRep[]; onClose: () => void;
+}> = ({ order, salesReps, onClose }) => (
   <Modal open={!!order} wide title={order ? `الطلب ${order.orderNumber}` : ''} onClose={onClose}>
     {order && (
       <div className="space-y-5">
@@ -239,7 +269,7 @@ export const OrderDetails: React.FC<{ order: Order | null; onClose: () => void }
             ['العميل', order.customerName],
             ['الحالة', statusLabels[order.status]],
             ['التاريخ', new Date(order.createdAt).toLocaleDateString('ar-LY')],
-            ['عدد البنود', String(order.items.length)],
+            ['المندوب', salesReps.find(rep => rep.id === order.agentId)?.name ?? 'بدون مندوب'],
           ].map(([label, value]) => (
             <div key={label} className="bg-surface-50 border border-surface-200 rounded-xl p-3">
               <dt className="text-surface-500 text-xs">{label}</dt>

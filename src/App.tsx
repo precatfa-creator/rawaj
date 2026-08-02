@@ -7,6 +7,7 @@ import { Products } from './pages/Products';
 import { Orders } from './pages/Orders';
 import { Customers } from './pages/Customers';
 import { Zones } from './pages/Zones';
+import { SalesReps } from './pages/SalesReps';
 import { Finances } from './pages/Finances';
 import { Reports } from './pages/Reports';
 import { AuditLog } from './pages/AuditLog';
@@ -15,13 +16,6 @@ import { isSupabaseConfigured, supabase } from './db/supabase';
 import { DEFAULT_STORE_SECTION, useRoute } from './lib/route';
 import type { Profile } from './types';
 import { AdminDatabaseChat } from './components/AdminDatabaseChat';
-
-const Placeholder: React.FC<{ title: string }> = ({ title }) => (
-  <div className="flex flex-col items-center justify-center h-96 rounded-3xl border border-surface-200 bg-white">
-    <h2 className="text-2xl font-black text-surface-500 mb-2">قريباً</h2>
-    <p className="text-surface-500 font-medium text-lg">صفحة {title} قيد التطوير</p>
-  </div>
-);
 
 /**
  * Two levels, both addressable: `#/` and `#/stores` are the portal, and
@@ -82,7 +76,7 @@ const Workspace: React.FC<{ profile: Profile }> = ({ profile }) => {
       case 'zones': return <Zones />;
       case 'finances': return <Finances />;
       case 'reports': return <Reports />;
-      case 'agents': return <Placeholder title="المندوبين" />;
+      case 'agents': return <SalesReps />;
       default: return <Products {...paging} />;
     }
   };

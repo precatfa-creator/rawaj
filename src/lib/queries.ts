@@ -119,7 +119,9 @@ const toNumbers = <T,>(rows: unknown[]): T[] =>
     const out: Record<string, unknown> = {};
     Object.entries(row as Record<string, unknown>).forEach(([key, value]) => {
       const asNumber = typeof value === 'string' && value !== '' && !Number.isNaN(Number(value));
-      out[key] = asNumber && key !== 'key' && key !== 'label' && key !== 'store_id' && key !== 'month_start'
+      const isIdentifier = key === 'key' || key === 'label' || key === 'store_id'
+        || key === 'rep_id' || key === 'month_start';
+      out[key] = asNumber && !isIdentifier
         ? Number(value)
         : value;
     });
@@ -175,6 +177,19 @@ export const useDimension = (dimension: string, storeId: string | null, limit = 
     () => rpc<DimensionRow>('stats_by_dimension', { p_dimension: dimension, p_store_id: storeId, p_limit: limit }),
     [], [dimension, storeId, limit], ['orders', 'products', 'customers'],
   );
+
+export interface SalesRepTotalRow {
+  rep_id: string; order_count: number; realized_count: number;
+  revenue: number; commission_due: number;
+}
+
+export const useSalesRepTotals = (storeId: string | null): Map<string, SalesRepTotalRow> => {
+  const rows = useAggregate<SalesRepTotalRow[]>(
+    () => rpc<SalesRepTotalRow>('sales_rep_totals', { p_store_id: storeId }),
+    [], [storeId], ['orders', 'sales_reps'],
+  );
+  return new Map(rows.map(row => [row.rep_id, row]));
+};
 
 export const useStoreTotals = (): Map<string, StoreTotalRow> => {
   const rows = useAggregate<StoreTotalRow[]>(
