@@ -5,6 +5,7 @@ import type {
 import { orderTotals } from './orderMath';
 import { deleteProductImages } from './storage';
 import { trimRow } from './text';
+import { normalizeArabic } from './arabic';
 
 export { orderTotals, nextOrderNumber } from './orderMath';
 
@@ -178,8 +179,14 @@ export const createCategory = async (name: string): Promise<string> => {
   if (!error) return trimmed;
 
   if (`${error.message ?? ''}`.includes('duplicate key')) {
-    const { data } = await supabase.from('categories').select('name').ilike('name', trimmed).maybeSingle();
-    return (data?.name as string) ?? trimmed;
+    // The unique index is on ar_normalize(name), so a collision means the
+    // normalised forms match while the raw text differs — "فاطمه" against
+    // "فاطمة". Matching on the raw text would therefore never find the row that
+    // caused the collision; the comparison has to be normalised too.
+    const { data } = await supabase.from('categories').select('name');
+    const target = normalizeArabic(trimmed);
+    const existing = (data ?? []).find(row => normalizeArabic(row.name as string) === target);
+    return (existing?.name as string) ?? trimmed;
   }
 
   console.error('createCategory failed', error);

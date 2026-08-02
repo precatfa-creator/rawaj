@@ -5,7 +5,7 @@ import { motion } from 'motion/react';
 import { OrderStatus } from '../types';
 import { statusLabels } from '../lib/dashboardStats';
 import { PAGE_SIZE, useDimension, usePagedList } from '../lib/queries';
-import { deleteOrders, setOrderStatus } from '../lib/mutations';
+import { deleteOrders, setOrderAgent, setOrderStatus } from '../lib/mutations';
 import { Confirm, ErrorNote } from '../components/Confirm';
 import { OrderDetails, OrderForm } from '../components/orderForms';
 import { Combobox } from '../components/Combobox';
@@ -75,6 +75,20 @@ export const Orders: React.FC<PagedProps> = ({ page, onPage }) => {
     setPendingId(null);
     if (result.ok) setSelected(new Set());
     else setError(result.message ?? "");
+  };
+
+  /**
+   * Reassignment after the fact, which is the normal case: a rep calls in sick,
+   * or leaves and their orders need a new owner. Without this the rep chosen
+   * while composing the order would be the only one it could ever have.
+   */
+  const applyAgent = async (ids: string[], agentId: string) => {
+    setPendingId('bulk');
+    setError('');
+    const result = await setOrderAgent(ids, agentId || null);
+    setPendingId(null);
+    if (result.ok) setSelected(new Set());
+    else setError(result.message ?? '');
   };
 
   const actionsVisibility = 'md:opacity-0 md:group-hover:opacity-100 md:group-focus-within:opacity-100';
@@ -158,6 +172,25 @@ export const Orders: React.FC<PagedProps> = ({ page, onPage }) => {
                 {statusLabels[status]}
               </button>
             ))}
+            {salesReps.length > 0 && (
+              <Combobox
+                size="sm"
+                label="إسناد إلى مندوب"
+                value=""
+                onChange={agentId => void applyAgent([...selected], agentId)}
+                options={[
+                  { value: '', label: 'بدون مندوب' },
+                  ...salesReps.filter(rep => rep.active).map(rep => ({
+                    value: rep.id,
+                    label: rep.name,
+                    hint: rep.zone || 'كل المناطق',
+                  })),
+                ]}
+                disabled={pendingId !== null}
+                placeholder="إسناد إلى مندوب"
+                className="w-44"
+              />
+            )}
             <button
               onClick={() => setConfirmDelete([...selected])}
               disabled={pendingId !== null}

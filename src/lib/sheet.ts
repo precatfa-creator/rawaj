@@ -111,9 +111,27 @@ export const toBoolean = (value: string, fallback = true): boolean => {
 
 const isExcel = (name: string) => /\.xlsx?$/i.test(name);
 
-/** exceljs is ~940 kB, so it is only fetched when someone opens a spreadsheet. */
+/**
+ * exceljs is ~940 kB, so it is only fetched when someone opens a spreadsheet.
+ *
+ * It ships as CommonJS, and how a CJS module's exports appear through a dynamic
+ * `import()` differs between the bundler and plain Node — sometimes on the
+ * namespace, sometimes under `.default`. Reading both is what makes the same
+ * code path work in the browser and in the check that exercises it.
+ */
+export const loadWorkbookClass = async () => {
+  const module = await import('exceljs');
+  const namespace = module as unknown as {
+    Workbook?: typeof import('exceljs').Workbook;
+    default?: { Workbook: typeof import('exceljs').Workbook };
+  };
+  const Workbook = namespace.Workbook ?? namespace.default?.Workbook;
+  if (!Workbook) throw new Error('exceljs did not expose Workbook');
+  return Workbook;
+};
+
 const readExcel = async (file: File): Promise<string[][]> => {
-  const { Workbook } = await import('exceljs');
+  const Workbook = await loadWorkbookClass();
   const workbook = new Workbook();
   await workbook.xlsx.load(await file.arrayBuffer());
 
@@ -180,7 +198,7 @@ export const downloadCsv = (filename: string, headers: string[], rows: SheetRow[
   save(new Blob(['﻿', toCsv(headers, rows)], { type: 'text/csv;charset=utf-8' }), filename);
 
 export const downloadXlsx = async (filename: string, headers: string[], rows: SheetRow[]) => {
-  const { Workbook } = await import('exceljs');
+  const Workbook = await loadWorkbookClass();
   const workbook = new Workbook();
   const sheet = workbook.addWorksheet('data', { views: [{ rightToLeft: true }] });
 
