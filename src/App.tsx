@@ -14,6 +14,7 @@ import { Login } from './pages/Login';
 import { isSupabaseConfigured, supabase } from './db/supabase';
 import { DEFAULT_STORE_SECTION, useRoute } from './lib/route';
 import type { Profile } from './types';
+import { AdminDatabaseChat } from './components/AdminDatabaseChat';
 
 const Placeholder: React.FC<{ title: string }> = ({ title }) => (
   <div className="flex flex-col items-center justify-center h-96 rounded-3xl border border-surface-200 bg-white">
@@ -28,7 +29,7 @@ const Placeholder: React.FC<{ title: string }> = ({ title }) => (
  * truth, so back/forward and refresh all land where the user expects.
  */
 const Workspace: React.FC<{ profile: Profile }> = ({ profile }) => {
-  const { stores, activeStoreId, setActiveStore } = useAppStore();
+  const { stores, setActiveStore } = useAppStore();
   const [route, navigate] = useRoute();
 
   const store = stores.find(s => s.id === route.storeId);
@@ -49,18 +50,21 @@ const Workspace: React.FC<{ profile: Profile }> = ({ profile }) => {
   if (!store) {
     const portalTab: PortalTab = route.view === 'stores' ? 'stores' : 'stats';
     return (
-      <Portal
-        profile={profile}
-        tab={portalTab}
-        onTabChange={tab => navigate({ view: tab, storeId: null, page: 0 })}
-        showUsers={route.view === 'users'}
-        auditPanel={route.view === 'audit' && profile.role === 'admin'
-          ? <AuditLog page={route.page} onPage={p => navigate({ view: 'audit', storeId: null, page: p })} />
-          : null}
-        onShowAudit={() => navigate({ view: 'audit', storeId: null, page: 0 })}
-        onShowUsers={show => navigate({ view: show ? 'users' : 'stats', storeId: null, page: 0 })}
-        onOpenStore={id => navigate({ view: DEFAULT_STORE_SECTION, storeId: id, page: 0 })}
-      />
+      <>
+        <Portal
+          profile={profile}
+          tab={portalTab}
+          onTabChange={tab => navigate({ view: tab, storeId: null, page: 0 })}
+          showUsers={route.view === 'users'}
+          auditPanel={route.view === 'audit' && profile.role === 'admin'
+            ? <AuditLog page={route.page} onPage={p => navigate({ view: 'audit', storeId: null, page: p })} />
+            : null}
+          onShowAudit={() => navigate({ view: 'audit', storeId: null, page: 0 })}
+          onShowUsers={show => navigate({ view: show ? 'users' : 'stats', storeId: null, page: 0 })}
+          onOpenStore={id => navigate({ view: DEFAULT_STORE_SECTION, storeId: id, page: 0 })}
+        />
+        {profile.role === 'admin' && <AdminDatabaseChat stores={stores} activeStoreId={null} />}
+      </>
     );
   }
 
@@ -84,15 +88,18 @@ const Workspace: React.FC<{ profile: Profile }> = ({ profile }) => {
   };
 
   return (
-    <MainLayout
-      activeTab={route.view}
-      setActiveTab={view => navigate({ view, storeId: store.id, page: 0 })}
-      profile={profile}
-      storeName={store.name}
-      onExitStore={() => navigate({ view: 'stores', storeId: null, page: 0 })}
-    >
-      {renderContent()}
-    </MainLayout>
+    <>
+      <MainLayout
+        activeTab={route.view}
+        setActiveTab={view => navigate({ view, storeId: store.id, page: 0 })}
+        profile={profile}
+        storeName={store.name}
+        onExitStore={() => navigate({ view: 'stores', storeId: null, page: 0 })}
+      >
+        {renderContent()}
+      </MainLayout>
+      {profile.role === 'admin' && <AdminDatabaseChat stores={stores} activeStoreId={store.id} />}
+    </>
   );
 };
 

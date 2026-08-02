@@ -26,6 +26,7 @@ export interface Product {
   brand: string;
   provider: string;
   category: string;
+  defaultSerial: string;
   colors: string[];
   sizes: string[];
   stock: number;
@@ -79,6 +80,8 @@ export type ZoneRegion = 'tripolitania' | 'cyrenaica' | 'fezzan';
 
 export interface DeliveryZone {
   id: string;
+  /** Sequential, operator-facing zone number: '00', '01', … Assigned by Postgres. */
+  code: string;
   name: string;
   region: ZoneRegion;
   capital: string;

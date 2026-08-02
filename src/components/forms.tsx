@@ -104,7 +104,7 @@ export const ProductForm: React.FC<{
 }> = ({ open, product, storeId, onClose }) => {
   const isNew = !product;
   const [draft, setDraft] = useState<ProductDraft>({
-    id: '', storeId, name: '', description: '', sku: '', category: '',
+    id: '', storeId, name: '', description: '', sku: '', defaultSerial: '', category: '',
     purchasePrice: 0, sellingPrice: 0, stock: 0, minStock: 0, status: 'active', images: [],
   });
   const { busy, error, submit } = useSubmit(onClose);
@@ -119,6 +119,7 @@ export const ProductForm: React.FC<{
       name: product?.name ?? '',
       description: product?.description ?? '',
       sku: product?.sku ?? '',
+      defaultSerial: product?.defaultSerial ?? '',
       category: product?.category ?? '',
       purchasePrice: product?.purchasePrice ?? 0,
       sellingPrice: product?.sellingPrice ?? 0,
@@ -151,6 +152,9 @@ export const ProductForm: React.FC<{
         </div>
         <Field label="رمز SKU">
           <input value={draft.sku} onChange={e => set('sku', e.target.value)} dir="ltr" className={fieldClass} />
+        </Field>
+        <Field label="الرقم التسلسلي الافتراضي" hint="يُستخدم عند عدم تسجيل رقم خاص بالقطعة.">
+          <input value={draft.defaultSerial} onChange={e => set('defaultSerial', e.target.value)} dir="ltr" className={fieldClass} />
         </Field>
         <Field label="الفئة">
           <input value={draft.category} onChange={e => set('category', e.target.value)} className={fieldClass} />

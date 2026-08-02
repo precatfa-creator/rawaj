@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import { useAppStore } from '../store';
 import { Plus, Search, Pencil, Trash2, Package } from 'lucide-react';
 import { motion } from 'motion/react';
@@ -7,6 +7,8 @@ import { deleteProduct } from '../lib/mutations';
 import { Confirm } from '../components/Confirm';
 import { ProductForm } from '../components/forms';
 import { Combobox } from '../components/Combobox';
+import { BulkBar } from '../components/BulkBar';
+import { productBulk } from '../lib/bulk';
 import { Pagination } from '../components/ui';
 import type { Product } from '../types';
 import type { PagedProps } from '../lib/route';
@@ -39,6 +41,10 @@ export const Products: React.FC<PagedProps> = ({ page, onPage }) => {
     page,
   });
   const visibleProducts = list.rows;
+
+  // Rebuilt only when the store changes; a new object per render would restart
+  // BulkBar's state on every keystroke in the search box.
+  const bulkSpec = useMemo(() => productBulk(activeStoreId ?? ''), [activeStoreId]);
 
   // Units sold comes from the same SQL grouping the reports use.
   const soldByProduct = new Map(useDimension('product', activeStoreId, 500).map(r => [r.key, r.units]));
@@ -92,6 +98,12 @@ export const Products: React.FC<PagedProps> = ({ page, onPage }) => {
           className="md:w-52"
         />
       </div>
+
+      <BulkBar
+        spec={bulkSpec}
+        title="استيراد وتصدير المنتجات"
+        hint="يقبل Excel و CSV وملفات Google Sheets المصدَّرة. المنتج الموجود يُحدَّث، والجديد يُضاف — المطابقة بالمعرّف ثم برمز SKU داخل هذا المتجر. الكمية الابتدائية تُطبَّق عند الإضافة فقط؛ مخزون منتج قائم يتغيّر بحركات المخزون وحدها."
+      />
 
       {visibleProducts.length === 0 ? (
         <div className="glass-card rounded-2xl p-12 text-center">

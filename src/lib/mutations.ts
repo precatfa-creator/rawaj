@@ -58,7 +58,8 @@ export const deleteStore = (id: string) =>
 
 export type ProductDraft = Pick<
   Product,
-  'id' | 'storeId' | 'name' | 'description' | 'sku' | 'category' | 'purchasePrice' | 'sellingPrice' | 'stock' | 'minStock' | 'status'
+  'id' | 'storeId' | 'name' | 'description' | 'sku' | 'defaultSerial' | 'category'
+  | 'purchasePrice' | 'sellingPrice' | 'stock' | 'minStock' | 'status'
 > & { images: string[] };
 
 const productRow = (draft: ProductDraft) => trimRow({
@@ -70,16 +71,24 @@ const productRow = (draft: ProductDraft) => trimRow({
   selling_price: draft.sellingPrice,
   margin: draft.sellingPrice - draft.purchasePrice,
   sku: draft.sku,
+  default_serial: draft.defaultSerial,
   category: draft.category,
-  stock: draft.stock,
   min_stock: draft.minStock,
   status: draft.status,
 });
 
+/**
+ * `stock` is written once, at creation, and never by an update.
+ *
+ * This is the choke point that enforces it: the form, the importer and anything
+ * added later all route through here, so none of them can quietly reset a
+ * quantity that inventory transactions now own. Post-creation changes go through
+ * `adjustStock`.
+ */
 export const saveProduct = (draft: ProductDraft, isNew: boolean) =>
   run(
     isNew
-      ? supabase.from('products').insert({ id: draft.id, ...productRow(draft) })
+      ? supabase.from('products').insert({ id: draft.id, stock: draft.stock, ...productRow(draft) })
       : supabase.from('products').update(productRow(draft)).eq('id', draft.id),
     isNew ? 'تعذر إضافة المنتج.' : 'تعذر حفظ تعديلات المنتج.',
   );
@@ -172,10 +181,11 @@ export const createOrder = async (draft: OrderDraft): Promise<WriteResult> => {
 // ---- delivery zones ----
 
 export type ZoneDraft = Pick<
-  DeliveryZone, 'id' | 'name' | 'region' | 'capital' | 'fee' | 'deliveryTimeDays' | 'active'
+  DeliveryZone, 'id' | 'code' | 'name' | 'region' | 'capital' | 'fee' | 'deliveryTimeDays' | 'active'
 >;
 
 export const saveZone = (draft: ZoneDraft, isNew: boolean) => {
+  const code = draft.code.trim();
   const row = trimRow({
     name: draft.name,
     region: draft.region,
@@ -183,12 +193,17 @@ export const saveZone = (draft: ZoneDraft, isNew: boolean) => {
     fee: draft.fee,
     delivery_time_days: draft.deliveryTimeDays,
     active: draft.active,
+    // A blank code is omitted rather than sent: the insert trigger then numbers
+    // the zone, and an update leaves the existing number alone.
+    ...(code ? { code } : {}),
   });
   return run(
     isNew
       ? supabase.from('delivery_zones').insert({ id: draft.id, ...row })
       : supabase.from('delivery_zones').update(row).eq('id', draft.id),
     isNew ? 'تعذر إضافة المنطقة.' : 'تعذر حفظ تعديلات المنطقة.',
+  ).then(result =>
+    !result.ok && code ? { ok: false, message: `تعذر الحفظ. قد يكون رقم المنطقة "${code}" مستخدماً بالفعل.` } : result,
   );
 };
 

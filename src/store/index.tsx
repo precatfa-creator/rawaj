@@ -31,8 +31,8 @@ interface AppState {
 const AppContext = createContext<AppState | undefined>(undefined);
 
 const storeColumns = 'id,name,image,facebookPage:facebook_page,productCount:product_count,customerCount:customer_count,orderCount:order_count,totalProfit:total_profit,lastActivity:last_activity';
-const zoneColumns = 'id,name,region,capital,areaKm2:area_km2,fee,deliveryTimeDays:delivery_time_days,active';
-const productColumns = 'id,storeId:store_id,name,description,images,purchasePrice:purchase_price,sellingPrice:selling_price,margin,sku,barcode,brand,provider,category,colors,sizes,stock,minStock:min_stock,status,addedAt:added_at,salesCount:sales_count';
+const zoneColumns = 'id,code,name,region,capital,areaKm2:area_km2,fee,deliveryTimeDays:delivery_time_days,active';
+const productColumns = 'id,storeId:store_id,name,description,images,purchasePrice:purchase_price,sellingPrice:selling_price,margin,sku,barcode,brand,provider,category,defaultSerial:default_serial,colors,sizes,stock,minStock:min_stock,status,addedAt:added_at,salesCount:sales_count';
 const customerColumns = 'id,name,phone,whatsapp,city,address,orderCount:order_count,totalSpent:total_spent,lastPurchase:last_purchase,rating,status';
 
 const resourceLabels: Record<string, string> = {
@@ -72,7 +72,7 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
     };
 
     const loadZones = async () => {
-      const { data, error } = await supabase.from('delivery_zones').select(zoneColumns).order('name');
+      const { data, error } = await supabase.from('delivery_zones').select(zoneColumns).order('code');
       if (error) return reportError('delivery_zones', error);
       reportSuccess('delivery_zones');
       if (active) setZones((data ?? []) as unknown as DeliveryZone[]);

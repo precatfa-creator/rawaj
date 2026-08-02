@@ -6,6 +6,8 @@ import { matchesSearch } from '../lib/arabic';
 import { deleteZone, newId, saveZone, type ZoneDraft } from '../lib/mutations';
 import { Confirm, ErrorNote } from '../components/Confirm';
 import { Combobox } from '../components/Combobox';
+import { BulkBar } from '../components/BulkBar';
+import { zoneBulk } from '../lib/bulk';
 import { Field, Modal, fieldClass, ghostButton, primaryButton } from '../components/Modal';
 import { Card, EmptyState, Metric, PageHead, Pill, actionButton, count, money } from '../components/ui';
 import type { DeliveryZone, ZoneRegion } from '../types';
@@ -24,7 +26,7 @@ const regionOptions = [
 const ZoneForm: React.FC<{ open: boolean; zone: DeliveryZone | null; onClose: () => void }> = ({ open, zone, onClose }) => {
   const isNew = !zone;
   const [draft, setDraft] = useState<ZoneDraft>({
-    id: '', name: '', region: 'tripolitania', capital: '', fee: 0, deliveryTimeDays: 3, active: true,
+    id: '', code: '', name: '', region: 'tripolitania', capital: '', fee: 0, deliveryTimeDays: 3, active: true,
   });
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
@@ -36,6 +38,7 @@ const ZoneForm: React.FC<{ open: boolean; zone: DeliveryZone | null; onClose: ()
     setError('');
     setDraft({
       id: zone?.id ?? newId(),
+      code: zone?.code ?? '',
       name: zone?.name ?? '',
       region: zone?.region ?? 'tripolitania',
       capital: zone?.capital ?? '',
@@ -74,9 +77,21 @@ const ZoneForm: React.FC<{ open: boolean; zone: DeliveryZone | null; onClose: ()
           if (result.ok) onClose(); else setError(result.message ?? '');
         }}
       >
-        <Field label="اسم المنطقة">
-          <input value={draft.name} onChange={e => set('name', e.target.value)} required className={fieldClass} />
-        </Field>
+        <div className="grid grid-cols-1 sm:grid-cols-[8rem_1fr] gap-4">
+          <Field label="رقم المنطقة" hint={isNew ? 'يُرقَّم تلقائياً.' : undefined}>
+            <input
+              value={draft.code}
+              onChange={e => set('code', e.target.value)}
+              dir="ltr"
+              inputMode="numeric"
+              placeholder={isNew ? 'تلقائي' : ''}
+              className={`${fieldClass} text-center tabular-nums`}
+            />
+          </Field>
+          <Field label="اسم المنطقة">
+            <input value={draft.name} onChange={e => set('name', e.target.value)} required className={fieldClass} />
+          </Field>
+        </div>
         <Combobox
           showLabel
           label="الإقليم"
@@ -115,7 +130,10 @@ export const Zones: React.FC = () => {
 
   const visible = zones
     .filter(zone => region === 'all' || zone.region === region)
-    .filter(zone => matchesSearch(zone.name, search) || matchesSearch(zone.capital, search));
+    .filter(zone =>
+      matchesSearch(zone.name, search)
+      || matchesSearch(zone.capital, search)
+      || matchesSearch(zone.code, search));
 
   const activeCount = zones.filter(zone => zone.active).length;
   const priced = zones.filter(zone => zone.fee > 0);
@@ -153,13 +171,19 @@ export const Zones: React.FC = () => {
             type="search"
             value={search}
             onChange={e => setSearch(e.target.value)}
-            placeholder="ابحث باسم المنطقة أو المدينة…"
+            placeholder="ابحث برقم المنطقة أو اسمها أو المدينة…"
             aria-label="ابحث في المناطق"
             className="w-full bg-white border border-surface-200 rounded-xl py-2.5 pr-10 pl-4 text-sm font-medium focus:outline-none focus:ring-2 focus:ring-primary-500/30 focus:border-primary-500"
           />
         </div>
         <Combobox label="الإقليم" value={region} onChange={setRegion} options={regionOptions} className="md:w-56" />
       </Card>
+
+      <BulkBar
+        spec={zoneBulk}
+        title="استيراد وتصدير المناطق"
+        hint="يقبل Excel و CSV وملفات Google Sheets المصدَّرة. المنطقة الموجودة تُحدَّث، والجديدة تُضاف. الملف المصدَّر يصلح كقالب معبَّأ — عدّله وأعد استيراده. اترك رقم المنطقة فارغاً ليُرقَّم تلقائياً."
+      />
 
       {visible.length === 0 ? (
         <EmptyState
@@ -179,7 +203,12 @@ export const Zones: React.FC = () => {
               <Card className={`p-5 h-full flex flex-col group ${zone.active ? '' : 'opacity-70'}`}>
                 <div className="flex items-start justify-between gap-2">
                   <div className="min-w-0">
-                    <h3 className="font-black text-lg text-surface-900 truncate">{zone.name}</h3>
+                    <h3 className="font-black text-lg text-surface-900 truncate flex items-center gap-2">
+                      <span className="shrink-0 rounded-lg bg-surface-100 border border-surface-200 px-2 py-0.5 text-sm tabular-nums text-surface-600">
+                        {zone.code}
+                      </span>
+                      <span className="truncate">{zone.name}</span>
+                    </h3>
                     <p className="text-sm text-surface-500 mt-0.5 truncate">
                       {zone.capital ? `المركز: ${zone.capital}` : 'بدون مركز محدّد'}
                     </p>
