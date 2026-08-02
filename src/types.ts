@@ -76,6 +76,23 @@ export interface Order {
   agentId?: string;
 }
 
+/** Why stock moved. 'sale' and 'initial' are written by the system, not chosen. */
+export type StockKind = 'purchase' | 'sale' | 'return' | 'damage' | 'adjustment' | 'initial';
+
+export interface StockEntry {
+  id: string;
+  productId: string;
+  storeId: string;
+  kind: StockKind;
+  /** Signed delta: +5 received, -2 sold. */
+  quantity: number;
+  /** Stock immediately after this movement. */
+  balance: number;
+  note: string;
+  orderId?: string;
+  createdAt: string;
+}
+
 export type ZoneRegion = 'tripolitania' | 'cyrenaica' | 'fezzan';
 
 export interface DeliveryZone {

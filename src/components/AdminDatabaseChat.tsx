@@ -1,5 +1,5 @@
 import React, { FormEvent, useEffect, useMemo, useRef, useState } from 'react';
-import type { ChatMessage, ChatOptions, ChatResponse } from '@heyputer/puter.js';
+import type { ChatMessage, ChatOptions, ChatResponse, Puter } from '@heyputer/puter.js';
 import {
   Bot,
   Database,
@@ -40,6 +40,7 @@ const REPORTS = [
   'top_customers',
   'top_cities',
   'low_stock',
+  'stock_activity',
   'recent_orders',
 ] as const;
 
@@ -111,6 +112,12 @@ const asText = (content: unknown): string => {
 
 const errorText = (error: unknown) => {
   if (error && typeof error === 'object') {
+    if ('error' in error && error.error === 'popup_blocked') {
+      return 'حظر المتصفح نافذة تسجيل Puter. اسمح بالنوافذ المنبثقة ثم حاول مرة أخرى.';
+    }
+    if ('error' in error && error.error === 'auth_window_closed') {
+      return 'أُغلقت نافذة Puter قبل إكمال تسجيل الدخول.';
+    }
     if ('msg' in error && typeof error.msg === 'string') return error.msg;
     if ('message' in error && typeof error.message === 'string') return error.message;
   }
@@ -169,7 +176,7 @@ const buildSystemPrompt = (stores: Store[], activeStoreId: string | null) => {
     activeStore
       ? `السياق الحالي هو متجر ${activeStore.name} ومعرّفه ${activeStore.id}. استخدمه افتراضياً ما لم يطلب المدير كل المتاجر أو متجراً آخر.`
       : 'لا يوجد متجر محدد حالياً؛ استخدم كل المتاجر افتراضياً إلا إذا سمّى المدير متجراً بعينه.',
-    'إذا كان السؤال خارج نطاق بيانات رَوَاج، اعتذر باختصار واطلب سؤالاً عن المبيعات أو الأرباح أو الطلبات أو المنتجات أو العملاء أو المخزون.',
+    'إذا كان السؤال خارج نطاق بيانات رَوَاج، اعتذر باختصار واطلب سؤالاً عن المبيعات أو الأرباح أو الطلبات أو المنتجات أو العملاء أو المخزون وحركاته.',
   ].join('\n');
 };
 
@@ -183,9 +190,11 @@ export const AdminDatabaseChat: React.FC<AdminDatabaseChatProps> = ({ stores, ac
   const [isOpen, setIsOpen] = useState(false);
   const [input, setInput] = useState('');
   const [isSending, setIsSending] = useState(false);
+  const [puterStatus, setPuterStatus] = useState<'idle' | 'loading' | 'ready' | 'error'>('idle');
   const [messages, setMessages] = useState<DisplayMessage[]>(() => [initialMessage(activeStoreName)]);
   const endRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
+  const puterRef = useRef<Puter | null>(null);
   const systemPrompt = useMemo(
     () => buildSystemPrompt(stores, activeStoreId),
     [stores, activeStoreId],
@@ -206,6 +215,23 @@ export const AdminDatabaseChat: React.FC<AdminDatabaseChatProps> = ({ stores, ac
     return () => document.removeEventListener('keydown', onKeyDown);
   }, [isOpen]);
 
+  useEffect(() => {
+    if (!isOpen || puterRef.current) return;
+    let active = true;
+    setPuterStatus('loading');
+    void import('@heyputer/puter.js')
+      .then(({ puter }) => {
+        if (!active) return;
+        puterRef.current = puter;
+        setPuterStatus('ready');
+      })
+      .catch(error => {
+        console.error('Failed to load Puter.js', error);
+        if (active) setPuterStatus('error');
+      });
+    return () => { active = false; };
+  }, [isOpen]);
+
   const clearConversation = () => {
     setMessages([initialMessage(activeStoreName)]);
     setInput('');
@@ -214,7 +240,7 @@ export const AdminDatabaseChat: React.FC<AdminDatabaseChatProps> = ({ stores, ac
   const sendMessage = async (event: FormEvent) => {
     event.preventDefault();
     const question = input.trim();
-    if (!question || isSending) return;
+    if (!question || isSending || !puterRef.current) return;
 
     const userMessage: DisplayMessage = { id: newId(), role: 'user', content: question };
     const nextDisplay = [...messages, userMessage];
@@ -223,9 +249,9 @@ export const AdminDatabaseChat: React.FC<AdminDatabaseChatProps> = ({ stores, ac
     setIsSending(true);
 
     try {
-      const { puter } = await import('@heyputer/puter.js');
+      const puter = puterRef.current;
       if (!puter.auth.isSignedIn()) {
-        // Puter sign-in opens a popup, so this remains inside the submit action.
+        // This is invoked synchronously from submit so browsers allow its popup.
         await puter.auth.signIn();
       }
 
@@ -366,14 +392,18 @@ export const AdminDatabaseChat: React.FC<AdminDatabaseChatProps> = ({ stores, ac
                 }}
                 rows={1}
                 maxLength={800}
-                disabled={isSending}
-                placeholder="اسأل عن المبيعات أو المخزون…"
+                disabled={isSending || puterStatus !== 'ready'}
+                placeholder={puterStatus === 'error'
+                  ? 'تعذر تحميل Puter. أغلق المساعد وافتحه مجدداً.'
+                  : puterStatus !== 'ready'
+                    ? 'جارٍ تجهيز Puter…'
+                    : 'اسأل عن المبيعات أو المخزون…'}
                 aria-label="رسالتك"
                 className="max-h-28 min-h-10 flex-1 resize-none bg-transparent px-2 py-2 text-sm text-surface-900 outline-none placeholder:text-surface-400 disabled:opacity-60"
               />
               <button
                 type="submit"
-                disabled={!input.trim() || isSending}
+                disabled={!input.trim() || isSending || puterStatus !== 'ready'}
                 className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-primary-700 text-white transition-colors hover:bg-primary-800 disabled:cursor-not-allowed disabled:opacity-40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 focus-visible:ring-offset-2"
                 aria-label="إرسال"
               >

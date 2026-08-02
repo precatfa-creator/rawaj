@@ -1,5 +1,5 @@
 import { supabase } from '../db/supabase';
-import type { Customer, DeliveryZone, OrderItem, OrderStatus, Product, Store } from '../types';
+import type { Customer, DeliveryZone, OrderItem, OrderStatus, Product, StockKind, Store } from '../types';
 import { orderTotals } from './orderMath';
 import { deleteProductImages } from './storage';
 import { trimRow } from './text';
@@ -99,6 +99,34 @@ export const deleteProduct = async (id: string, images: string[] = []): Promise<
   // product intact and still showing its images.
   if (result.ok) await deleteProductImages(images);
   return result;
+};
+
+/**
+ * The only way stock moves after an item is created.
+ *
+ * `quantity` is a signed delta so two movements recorded at once add up instead
+ * of one overwriting the other. The kind is what the operator did; the sign is
+ * derived from it by the caller.
+ */
+export const adjustStock = async (
+  entry: { productId: string; kind: StockKind; quantity: number; note: string },
+): Promise<WriteResult> => {
+  const { error } = await supabase.rpc('record_stock_entry', {
+    p_id: newId(),
+    p_product_id: entry.productId,
+    p_kind: entry.kind,
+    p_quantity: entry.quantity,
+    p_note: entry.note.trim(),
+  });
+
+  if (!error) return ok;
+  console.error('adjustStock failed', error);
+
+  const raw = `${error.message ?? ''}`;
+  if (raw.includes('INSUFFICIENT_STOCK')) return fail('الكمية المطلوب خصمها تتجاوز المخزون المتاح.');
+  if (raw.includes('ZERO_QUANTITY')) return fail('أدخل كمية أكبر من صفر.');
+  if (raw.includes('NO_SUCH_PRODUCT')) return fail('المنتج لم يعد موجوداً.');
+  return fail('تعذر تسجيل حركة المخزون.');
 };
 
 // ---- customers ----

@@ -1,11 +1,12 @@
 import React, { useMemo, useState } from 'react';
 import { useAppStore } from '../store';
-import { Plus, Search, Pencil, Trash2, Package } from 'lucide-react';
+import { Plus, Search, Pencil, Trash2, Package, ArrowLeftRight } from 'lucide-react';
 import { motion } from 'motion/react';
 import { PAGE_SIZE, useDimension, usePagedList } from '../lib/queries';
 import { deleteProduct } from '../lib/mutations';
 import { Confirm } from '../components/Confirm';
 import { ProductForm } from '../components/forms';
+import { StockForm } from '../components/StockForm';
 import { Combobox } from '../components/Combobox';
 import { BulkBar } from '../components/BulkBar';
 import { productBulk } from '../lib/bulk';
@@ -29,6 +30,7 @@ export const Products: React.FC<PagedProps> = ({ page, onPage }) => {
   const [editing, setEditing] = useState<Product | null>(null);
   const [creating, setCreating] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState<Product | null>(null);
+  const [moving, setMoving] = useState<Product | null>(null);
 
   // One page of rows; the filter, the search and the count all run in Postgres.
   const list = usePagedList<Product>({
@@ -135,6 +137,14 @@ export const Products: React.FC<PagedProps> = ({ page, onPage }) => {
                   <Pencil size={17} />
                 </button>
                 <button
+                  onClick={() => setMoving(product)}
+                  aria-label={`حركة مخزون ${product.name}`}
+                  title="حركة مخزون"
+                  className={`${iconButton} text-surface-600 hover:text-primary-700`}
+                >
+                  <ArrowLeftRight size={17} />
+                </button>
+                <button
                   onClick={() => setConfirmDelete(product)}
                   aria-label={`حذف ${product.name}`}
                   title="حذف"
@@ -215,6 +225,8 @@ export const Products: React.FC<PagedProps> = ({ page, onPage }) => {
         storeId={activeStoreId ?? ''}
         onClose={() => { setCreating(false); setEditing(null); }}
       />
+
+      <StockForm product={moving} onClose={() => setMoving(null)} />
 
       <Confirm
         open={confirmDelete !== null}

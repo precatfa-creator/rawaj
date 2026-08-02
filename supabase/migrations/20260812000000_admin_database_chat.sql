@@ -29,7 +29,7 @@ begin
 
   if p_report is null or p_report not in (
     'overview', 'monthly_sales', 'order_statuses', 'top_products',
-    'top_customers', 'top_cities', 'low_stock', 'recent_orders'
+    'top_customers', 'top_cities', 'low_stock', 'stock_activity', 'recent_orders'
   ) then
     raise exception using
       errcode = '22023',
@@ -190,6 +190,27 @@ begin
         and (p.stock <= p.min_stock or p.status = 'out_of_stock')
       order by shortage desc, p.stock, p.name
       limit v_limit
+    ) row_data;
+
+  elsif p_report = 'stock_activity' then
+    select jsonb_build_object(
+      'report', p_report,
+      'scope', coalesce(p_store_id, 'all'),
+      'privacy', 'Stock entry notes and actor identifiers are excluded.',
+      'generated_at', now(),
+      'rows', coalesce(jsonb_agg(to_jsonb(row_data) order by row_data.movement_count desc), '[]'::jsonb)
+    )
+    into v_result
+    from (
+      select
+        se.kind,
+        count(*) as movement_count,
+        coalesce(sum(se.quantity), 0) as net_quantity,
+        coalesce(sum(abs(se.quantity)), 0) as moved_units,
+        max(se.created_at) as last_movement_at
+      from public.stock_entries se
+      where p_store_id is null or se.store_id = p_store_id
+      group by se.kind
     ) row_data;
 
   else -- recent_orders

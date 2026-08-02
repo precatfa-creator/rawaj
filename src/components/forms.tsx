@@ -165,8 +165,24 @@ export const ProductForm: React.FC<{
         <Field label="سعر البيع (د.ل)" hint={`الربح المحتسب: ${margin.toLocaleString('en-US')} د.ل`}>
           <input type="number" min={0} step="0.01" value={draft.sellingPrice} onChange={e => set('sellingPrice', Number(e.target.value))} required className={fieldClass} />
         </Field>
-        <Field label="المخزون">
-          <input type="number" min={0} value={draft.stock} onChange={e => set('stock', Number(e.target.value))} required className={fieldClass} />
+        {/* Editable exactly once. After creation the quantity is the running
+            total of the stock ledger, and typing over it would be a silent lie:
+            saveProduct drops `stock` from every update. */}
+        <Field
+          label={isNew ? 'الكمية الابتدائية' : 'المخزون الحالي'}
+          hint={isNew ? undefined : 'يتغيّر بحركات المخزون فقط — استخدم «حركة مخزون».'}
+        >
+          <input
+            type="number"
+            min={0}
+            value={draft.stock}
+            onChange={e => set('stock', Number(e.target.value))}
+            required={isNew}
+            readOnly={!isNew}
+            aria-readonly={!isNew}
+            tabIndex={isNew ? undefined : -1}
+            className={`${fieldClass} ${isNew ? '' : 'bg-surface-100 text-surface-500 cursor-not-allowed'}`}
+          />
         </Field>
         <Field label="حد التنبيه">
           <input type="number" min={0} value={draft.minStock} onChange={e => set('minStock', Number(e.target.value))} required className={fieldClass} />
