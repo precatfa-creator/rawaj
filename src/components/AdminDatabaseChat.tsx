@@ -165,10 +165,26 @@ const errorText = (error: unknown) => {
   return 'تعذر الاتصال بالمساعد. حاول مرة أخرى.';
 };
 
-const toChatMessage = (role: string, content: string): ChatMessage => ({
+/**
+ * What we actually put on the wire.
+ *
+ * The SDK types `images` as required on every message, so the obvious thing to
+ * write is `images: []`. The backend then rejects it —
+ * `Unknown parameter: 'input[0].images'` — because an empty array is still a
+ * parameter the Responses API does not accept. gpt-5.4-nano tolerated it;
+ * gpt-5.6-sol validates and returns 400.
+ *
+ * This assistant is text in, text out, so the field is dropped rather than sent
+ * empty, and the type is narrowed locally instead of loosening the SDK's.
+ */
+type OutgoingMessage = Omit<ChatMessage, 'images'>;
+
+/** The SDK demands `images`; the API refuses it. Cast at the boundary once. */
+const asPayload = (messages: OutgoingMessage[]) => messages as ChatMessage[];
+
+const toChatMessage = (role: string, content: string): OutgoingMessage => ({
   role,
   content,
-  images: [],
 });
 
 const runDatabaseTool = async (toolCall: ToolCall) => {
@@ -315,14 +331,14 @@ export const AdminDatabaseChat: React.FC<AdminDatabaseChatProps> = ({ stores, ac
       }
 
       const recentHistory = nextDisplay.slice(-MAX_HISTORY_MESSAGES);
-      const requestMessages: ChatMessage[] = [
+      const requestMessages: OutgoingMessage[] = [
         toChatMessage('system', systemPrompt),
         ...recentHistory.map(message => toChatMessage(message.role, message.content)),
       ];
 
       let response: ChatResponse | null = null;
       for (let round = 0; round < MAX_TOOL_ROUNDS; round += 1) {
-        response = await puter.ai.chat(requestMessages, {
+        response = await puter.ai.chat(asPayload(requestMessages), {
           model: MODEL,
           tools: [DATABASE_TOOL],
           temperature: 0.2,
@@ -333,14 +349,17 @@ export const AdminDatabaseChat: React.FC<AdminDatabaseChatProps> = ({ stores, ac
         const toolCalls = assistantMessage?.tool_calls ?? [];
         if (!assistantMessage || toolCalls.length === 0) break;
 
-        requestMessages.push({ ...assistantMessage, images: assistantMessage.images ?? [] });
+        // The response carries `images` back; echoing the turn verbatim would
+        // put the rejected parameter straight back on the next request.
+        const { images: _unused, ...echoed } = assistantMessage;
+        requestMessages.push(echoed);
+
         for (const toolCall of toolCalls) {
           const result = await runDatabaseTool(toolCall);
           requestMessages.push({
             role: 'tool',
             tool_call_id: toolCall.id,
             content: result,
-            images: [],
           });
         }
       }
@@ -350,7 +369,7 @@ export const AdminDatabaseChat: React.FC<AdminDatabaseChatProps> = ({ stores, ac
       // tools offered forces it to answer from what it already has, instead of
       // the user getting a generic apology after four successful queries.
       if (response?.message?.tool_calls?.length) {
-        response = await puter.ai.chat(requestMessages, {
+        response = await puter.ai.chat(asPayload(requestMessages), {
           model: MODEL,
           temperature: 0.2,
           max_tokens: 900,
