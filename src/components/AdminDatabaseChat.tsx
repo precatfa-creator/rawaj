@@ -1,5 +1,5 @@
 import React, { FormEvent, useEffect, useMemo, useRef, useState } from 'react';
-import type { ChatMessage, ChatOptions, ChatResponse, Puter } from '@heyputer/puter.js';
+import type { ChatOptions, ChatResponse, Puter } from '@heyputer/puter.js';
 import {
   Bot,
   Database,
@@ -13,6 +13,9 @@ import {
   X,
 } from 'lucide-react';
 import { supabase } from '../db/supabase';
+import {
+  asPayload, toChatMessage, toOutgoing, toToolResult, type OutgoingMessage,
+} from '../lib/chatMessages';
 import { Markdown } from './Markdown';
 import type { Store } from '../types';
 
@@ -197,28 +200,6 @@ const errorText = (error: unknown) => {
   return 'تعذر الاتصال بالمساعد. حاول مرة أخرى.';
 };
 
-/**
- * What we actually put on the wire.
- *
- * The SDK types `images` as required on every message, so the obvious thing to
- * write is `images: []`. The backend then rejects it —
- * `Unknown parameter: 'input[0].images'` — because an empty array is still a
- * parameter the Responses API does not accept. gpt-5.4-nano tolerated it;
- * gpt-5.6-sol validates and returns 400.
- *
- * This assistant is text in, text out, so the field is dropped rather than sent
- * empty, and the type is narrowed locally instead of loosening the SDK's.
- */
-type OutgoingMessage = Omit<ChatMessage, 'images'>;
-
-/** The SDK demands `images`; the API refuses it. Cast at the boundary once. */
-const asPayload = (messages: OutgoingMessage[]) => messages as ChatMessage[];
-
-const toChatMessage = (role: string, content: string): OutgoingMessage => ({
-  role,
-  content,
-});
-
 const runDatabaseTool = async (toolCall: ToolCall) => {
   if (toolCall.function.name !== 'query_business_data') {
     return JSON.stringify({ error: 'unsupported_tool' });
@@ -379,18 +360,11 @@ export const AdminDatabaseChat: React.FC<AdminDatabaseChatProps> = ({ stores, ac
         const toolCalls = assistantMessage?.tool_calls ?? [];
         if (!assistantMessage || toolCalls.length === 0) break;
 
-        // The response carries `images` back; echoing the turn verbatim would
-        // put the rejected parameter straight back on the next request.
-        const { images: _unused, ...echoed } = assistantMessage;
-        requestMessages.push(echoed);
+        requestMessages.push(toOutgoing(assistantMessage));
 
         for (const toolCall of toolCalls) {
           const result = await runDatabaseTool(toolCall);
-          requestMessages.push({
-            role: 'tool',
-            tool_call_id: toolCall.id,
-            content: result,
-          });
+          requestMessages.push(toToolResult(toolCall.id, result));
         }
       }
 
