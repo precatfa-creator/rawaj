@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { lazy, Suspense, useCallback, useEffect, useState } from 'react';
 import type { Session } from '@supabase/supabase-js';
 import { AppProvider, useAppStore } from './store';
 import { MainLayout } from './layouts/MainLayout';
@@ -15,7 +15,14 @@ import { Login } from './pages/Login';
 import { isSupabaseConfigured, supabase } from './db/supabase';
 import { DEFAULT_STORE_SECTION, useRoute } from './lib/route';
 import type { Profile } from './types';
-import { AdminDatabaseChat } from './components/AdminDatabaseChat';
+/**
+ * Admin-only, and it drags in the Markdown renderer plus the Puter SDK loader.
+ * Lazy so the ~165 kB never reaches the users who cannot open it, and Suspense
+ * renders nothing while it arrives — the launcher is a floating button, so
+ * there is no layout to hold open.
+ */
+const AdminDatabaseChat = lazy(() =>
+  import('./components/AdminDatabaseChat').then(m => ({ default: m.AdminDatabaseChat })));
 
 /**
  * Two levels, both addressable: `#/` and `#/stores` are the portal, and
@@ -57,7 +64,11 @@ const Workspace: React.FC<{ profile: Profile }> = ({ profile }) => {
           onShowUsers={show => navigate({ view: show ? 'users' : 'stats', storeId: null, page: 0 })}
           onOpenStore={id => navigate({ view: DEFAULT_STORE_SECTION, storeId: id, page: 0 })}
         />
-        {profile.role === 'admin' && <AdminDatabaseChat stores={stores} activeStoreId={null} />}
+        {profile.role === 'admin' && (
+          <Suspense fallback={null}>
+            <AdminDatabaseChat stores={stores} activeStoreId={null} />
+          </Suspense>
+        )}
       </>
     );
   }
@@ -92,7 +103,11 @@ const Workspace: React.FC<{ profile: Profile }> = ({ profile }) => {
       >
         {renderContent()}
       </MainLayout>
-      {profile.role === 'admin' && <AdminDatabaseChat stores={stores} activeStoreId={store.id} />}
+      {profile.role === 'admin' && (
+        <Suspense fallback={null}>
+          <AdminDatabaseChat stores={stores} activeStoreId={store.id} />
+        </Suspense>
+      )}
     </>
   );
 };
