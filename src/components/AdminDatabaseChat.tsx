@@ -69,6 +69,38 @@ const readStoredSize = (): PanelSize => {
  * built without the override silently falls back to whatever is written here.
  */
 const MODEL = import.meta.env.VITE_PUTER_MODEL?.trim() || 'openai/gpt-5.6-sol';
+
+/**
+ * `reasoning_effort` and `verbosity` are OpenAI-only, so an override pointing at
+ * Claude or Gemini must not receive them. Matches `openai/gpt-5.6-sol`,
+ * `azure:openai/gpt-5.4`, `openrouter:openai/gpt-5.6-sol-pro`, and plain
+ * `gpt-5-nano`, while leaving `anthropic:claude-*` alone.
+ */
+const IS_OPENAI_MODEL = /(^|[:/])(openai|gpt-)/i.test(MODEL);
+
+/**
+ * Request options, built once from the model rather than hardcoded.
+ *
+ * Reasoning models reject `temperature` outright — 400 "Unsupported parameter:
+ * 'temperature' is not supported with this model". Puter's documented steering
+ * for them is `reasoning_effort` and `verbosity` instead, and omitting any
+ * option makes Puter fall back to that model's own default, so sending less is
+ * always safe.
+ *
+ * `low` effort on both counts: choosing among nine enumerated reports and
+ * reading the rows back is not deep reasoning, and the admin pays per call.
+ *
+ * The token ceiling is generous because reasoning tokens are billed against the
+ * same budget as the reply — the old 900 would have been spent thinking, and
+ * truncated the Arabic answer mid-sentence.
+ */
+const CHAT_OPTIONS: ChatOptions = {
+  model: MODEL,
+  max_tokens: 4000,
+  ...(IS_OPENAI_MODEL
+    ? { reasoning_effort: 'low', verbosity: 'low' }
+    : { temperature: 0.2 }),
+};
 const MAX_TOOL_ROUNDS = 4;
 const MAX_HISTORY_MESSAGES = 18;
 
@@ -339,10 +371,8 @@ export const AdminDatabaseChat: React.FC<AdminDatabaseChatProps> = ({ stores, ac
       let response: ChatResponse | null = null;
       for (let round = 0; round < MAX_TOOL_ROUNDS; round += 1) {
         response = await puter.ai.chat(asPayload(requestMessages), {
-          model: MODEL,
+          ...CHAT_OPTIONS,
           tools: [DATABASE_TOOL],
-          temperature: 0.2,
-          max_tokens: 900,
         }) as ChatResponse;
 
         const assistantMessage = response.message;
@@ -369,11 +399,8 @@ export const AdminDatabaseChat: React.FC<AdminDatabaseChatProps> = ({ stores, ac
       // tools offered forces it to answer from what it already has, instead of
       // the user getting a generic apology after four successful queries.
       if (response?.message?.tool_calls?.length) {
-        response = await puter.ai.chat(asPayload(requestMessages), {
-          model: MODEL,
-          temperature: 0.2,
-          max_tokens: 900,
-        }) as ChatResponse;
+        // No tools offered, so the model has to answer from what it gathered.
+        response = await puter.ai.chat(asPayload(requestMessages), CHAT_OPTIONS) as ChatResponse;
       }
 
       const answer = asText(response?.message?.content);
