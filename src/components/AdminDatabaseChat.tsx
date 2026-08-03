@@ -59,7 +59,16 @@ const readStoredSize = (): PanelSize => {
   return SIZE_ORDER.includes(stored as PanelSize) ? (stored as PanelSize) : 'normal';
 };
 
-const MODEL = import.meta.env.VITE_PUTER_MODEL?.trim() || 'openai/gpt-5.4-nano';
+/**
+ * The assistant plans tool calls and reads reports back as Arabic prose, which
+ * a nano model does adequately and a full one does noticeably better. Puter
+ * bills the signed-in administrator, not the project, so the cost of the
+ * upgrade lands with whoever chose to ask the question.
+ *
+ * VITE_ vars are inlined at build time, so the default matters: a deployment
+ * built without the override silently falls back to whatever is written here.
+ */
+const MODEL = import.meta.env.VITE_PUTER_MODEL?.trim() || 'openai/gpt-5.6-sol';
 const MAX_TOOL_ROUNDS = 4;
 const MAX_HISTORY_MESSAGES = 18;
 
