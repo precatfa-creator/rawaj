@@ -45,6 +45,29 @@ The SQL migrations create the schema, RLS policies, and Realtime publication. No
 
 If you applied an earlier version of the schema, `20260802000000_remove_demo_data.sql` deletes the demo records it seeded. It only removes rows that nothing of yours references, so it is safe to run on a database you have already been using.
 
+## What belongs to a store
+
+Products, orders, stock movements, customers, sales representatives and categories all belong to exactly one store. The same person shopping at two stores is two customer records; the same category name in two stores is two rows. Nothing is shared, and switching store reloads all of it.
+
+Delivery zones are the exception. The 22 Libyan zones are a shared catalogue every store starts from. The first time a store changes one — its fee, its commission, whether it is active — that store gets its own copy, and the shared default keeps serving every other store. A store can also add zones of its own. Deleting a shared zone from inside a store is not possible; it is switched off for that store only.
+
+Every active user still sees every store. Per-user store membership is not implemented yet.
+
+## Document naming
+
+Each doctype — orders, customers, items, sales representatives, zones — declares the naming series it may use and which one is the default, in **تسمية المستندات** on the portal (administrators only). A series is a pattern:
+
+```
+ORD-.YYYY.-.####   ->  ORD-2026-0001
+CUS-.####          ->  CUS-0001
+```
+
+`.YYYY.` `.YY.` `.MM.` `.DD.` are replaced when the document is created, and the run of `#` is the counter — its length is the zero-padding. Counters are per store, so **every store numbers its own orders from 1**: two stores can each hold their own `ORD-2026-0001`, and `orders.order_number` is unique per store rather than globally.
+
+The same screen lists each counter and lets an administrator set it, for a business that already issued numbers before this app.
+
+Orders created before this existed keep their old `ORD-1002`-style numbers; the new series has a different prefix, so the two never collide. An item saved with a blank SKU takes one from the item series; a typed SKU is kept as typed.
+
 ## Administrator data assistant
 
 Administrators see an **اسأل البيانات** widget on the portal and inside each store. The AI runs through [Puter.js](https://docs.puter.com/AI/chat/), so there is no developer API key. On first use, Puter opens its sign-in window; under Puter's [user-pays model](https://docs.puter.com/user-pays-model/), each administrator's Puter account covers that administrator's AI usage.

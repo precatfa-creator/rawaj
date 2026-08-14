@@ -6,6 +6,7 @@ import {
   Truck,
   MapPin,
   Wallet,
+  History,
   PieChart,
   Menu,
   X,
@@ -31,6 +32,7 @@ interface MainLayoutProps {
 
 const menuItems = [
   { id: 'products', label: 'المنتجات', icon: Package },
+  { id: 'movements', label: 'حركات المخزون', icon: History },
   { id: 'orders', label: 'الطلبات', icon: ShoppingCart },
   { id: 'customers', label: 'العملاء', icon: Users },
   { id: 'agents', label: 'المندوبين', icon: Truck },

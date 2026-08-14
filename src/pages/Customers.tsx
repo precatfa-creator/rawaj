@@ -15,7 +15,7 @@ const STAGGER_CAP = 8;
 const money = (value: number) => `${Math.round(value).toLocaleString('en-US')} د.ل`;
 
 export const Customers: React.FC<PagedProps> = ({ page, onPage }) => {
-  const { zones } = useAppStore();
+  const { zones, activeStoreId } = useAppStore();
   const [searchTerm, setSearchTerm] = useState('');
   const [city, setCity] = useState('');
   const [status, setStatus] = useState<Customer['status'] | 'all'>('all');
@@ -25,8 +25,12 @@ export const Customers: React.FC<PagedProps> = ({ page, onPage }) => {
 
   const list = usePagedList<Customer>({
     table: 'customers',
-    columns: 'id,name,phone,whatsapp,city,address,orderCount:order_count,totalSpent:total_spent,lastPurchase:last_purchase,rating,status',
-    match: { city: city || undefined, status: status === 'all' ? undefined : status },
+    columns: 'id,storeId:store_id,code,name,phone,whatsapp,city,address,orderCount:order_count,totalSpent:total_spent,lastPurchase:last_purchase,rating,status',
+    match: {
+      store_id: activeStoreId ?? undefined,
+      city: city || undefined,
+      status: status === 'all' ? undefined : status,
+    },
     search: searchTerm,
     orderBy: 'name',
     ascending: true,
@@ -36,7 +40,7 @@ export const Customers: React.FC<PagedProps> = ({ page, onPage }) => {
 
   // Order counts and spend are grouped in Postgres over every order.
   const totals = new Map(
-    useDimension('customer', null, 1000).map(r => [r.key, { orderCount: r.order_count, totalSpent: r.revenue }]),
+    useDimension('customer', activeStoreId, 1000).map(r => [r.key, { orderCount: r.order_count, totalSpent: r.revenue }]),
   );
 
   // Cities come from the delivery zones now, the same list the customer form
@@ -52,7 +56,7 @@ export const Customers: React.FC<PagedProps> = ({ page, onPage }) => {
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
           <h2 className="text-3xl font-bold text-surface-900">العملاء</h2>
-          <p className="text-surface-500 mt-1">العملاء مشتركون بين كل المتاجر، وليسوا خاصين بهذا المتجر.</p>
+          <p className="text-surface-500 mt-1">عملاء هذا المتجر. لكل متجر قائمته الخاصة.</p>
         </div>
         <button
           onClick={() => setCreating(true)}

@@ -4,6 +4,7 @@ import { motion } from 'motion/react';
 import { useAppStore } from '../store';
 import { matchesSearch } from '../lib/arabic';
 import { useSalesRepTotals } from '../lib/queries';
+import { describeCommission } from '../lib/commission';
 import { deleteSalesRep } from '../lib/mutations';
 import { Confirm } from '../components/Confirm';
 import { Combobox } from '../components/Combobox';
@@ -30,12 +31,15 @@ export const SalesReps: React.FC = () => {
   const totals = useSalesRepTotals(activeStoreId);
 
   const visible = salesReps
-    .filter(rep => zone === 'all' || rep.zone === zone || (zone === 'none' && !rep.zone))
+    .filter(rep => zone === 'all'
+      || (zone === 'none' ? rep.zones.length === 0 : rep.zones.includes(zone)))
     .filter(rep => matchesSearch(rep.name, search) || matchesSearch(rep.phone, search));
 
   const activeCount = salesReps.filter(rep => rep.active).length;
   const commissionDue = salesReps.reduce((sum, rep) => sum + (totals.get(rep.id)?.commission_due ?? 0), 0);
   const delivered = salesReps.reduce((sum, rep) => sum + (totals.get(rep.id)?.realized_count ?? 0), 0);
+
+  const zonesWithCommission = zones.filter(zone => zone.commissionType !== 'none');
 
   const zoneOptions = [
     { value: 'all', label: 'كل المناطق' },
@@ -110,7 +114,10 @@ export const SalesReps: React.FC = () => {
                       </div>
                       <div className="min-w-0">
                         <h3 className="font-black text-lg text-surface-900 truncate">{rep.name}</h3>
-                        <p className="text-sm text-surface-500 mt-0.5 truncate">{rep.zone || 'كل المناطق'}</p>
+                        {rep.code && <p className="text-xs text-surface-500 mt-0.5" dir="ltr">{rep.code}</p>}
+                        <p className="text-sm text-surface-500 mt-0.5 truncate">
+                          {rep.zones.length > 0 ? rep.zones.join('، ') : 'كل المناطق'}
+                        </p>
                       </div>
                     </div>
                     <div className="flex gap-1 shrink-0 transition-opacity md:opacity-0 md:group-hover:opacity-100 md:group-focus-within:opacity-100">
@@ -140,6 +147,15 @@ export const SalesReps: React.FC = () => {
                       {rep.active ? 'على رأس العمل' : 'موقوف'}
                     </Pill>
                     {rep.commission > 0 && <Pill>{money(rep.commission)} لكل طلب</Pill>}
+                    {/* Zones that price their own commission override the flat
+                        amount above, so the card says which ones do. */}
+                    {(rep.zones.length === 0 ? [] : zonesWithCommission.filter(z => rep.zones.includes(z.name)))
+                      .slice(0, 3)
+                      .map(z => (
+                        <Pill key={z.id} tone="bg-primary-50 text-primary-800 border-primary-200">
+                          {z.name}: {describeCommission(z)}
+                        </Pill>
+                      ))}
                   </div>
 
                   <div className="space-y-2 mt-4">

@@ -9,8 +9,8 @@ export interface Route {
   page: number;
 }
 
-const STORE_SECTIONS = ['products', 'orders', 'customers', 'agents', 'zones', 'finances', 'reports'];
-const PORTAL_VIEWS = ['stats', 'stores', 'users', 'audit'];
+const STORE_SECTIONS = ['products', 'movements', 'orders', 'customers', 'agents', 'zones', 'finances', 'reports'];
+const PORTAL_VIEWS = ['stats', 'stores', 'users', 'audit', 'naming'];
 
 export const DEFAULT_STORE_SECTION = 'products';
 
@@ -21,6 +21,7 @@ export const DEFAULT_STORE_SECTION = 'products';
  *   #/stores      portal, stores tab
  *   #/users       portal, admin users
  *   #/audit       portal, audit log (admins only)
+ *   #/naming      portal, document naming settings (admins only)
  *   #/store/<id>/orders
  */
 export const parseHash = (hash: string): Route => {

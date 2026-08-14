@@ -33,6 +33,28 @@ const run = async (action: PromiseLike<{ error: unknown }>, message: string): Pr
 
 export const newId = () => crypto.randomUUID();
 
+/**
+ * The next document name for a doctype, from its naming series.
+ *
+ * The counter lives in Postgres and is taken in one atomic statement, so two
+ * tabs creating a document at the same moment get two numbers. Returns '' on
+ * failure and lets the caller decide — for a blank SKU that means "leave it
+ * blank", which is what it was before.
+ */
+export const nextDocumentName = async (
+  doctype: string,
+  series: string | null,
+  storeId: string | null,
+): Promise<string> => {
+  const { data, error } = await supabase.rpc('next_document_name', {
+    p_doctype: doctype,
+    p_series: series,
+    p_store_id: storeId,
+  });
+  if (error) { console.error(`next_document_name(${doctype}) failed`, error); return ''; }
+  return (data as string) ?? '';
+};
+
 // ---- stores ----
 
 export type StoreDraft = Pick<Store, 'id' | 'name' | 'image' | 'facebookPage'>;
@@ -63,7 +85,12 @@ export type ProductDraft = Pick<
   Product,
   'id' | 'storeId' | 'name' | 'description' | 'sku' | 'defaultSerial' | 'category'
   | 'purchasePrice' | 'sellingPrice' | 'stock' | 'minStock' | 'status'
-> & { images: string[] };
+> & {
+  images: string[];
+  sizes: string[];
+  /** Series used to fill a blank SKU on creation; the doctype default when absent. */
+  namingSeries?: string;
+};
 
 const productRow = (draft: ProductDraft) => trimRow({
   store_id: draft.storeId,
@@ -76,6 +103,9 @@ const productRow = (draft: ProductDraft) => trimRow({
   sku: draft.sku,
   default_serial: draft.defaultSerial,
   category: draft.category,
+  // Blanks are dropped rather than stored: a sizes array holding '' would put an
+  // unnamed option in every order line's picker.
+  sizes: draft.sizes.map(size => size.trim()).filter(Boolean),
   min_stock: draft.minStock,
   status: draft.status,
 });
@@ -88,13 +118,22 @@ const productRow = (draft: ProductDraft) => trimRow({
  * quantity that inventory transactions now own. Post-creation changes go through
  * `adjustStock`.
  */
-export const saveProduct = (draft: ProductDraft, isNew: boolean) =>
-  run(
+export const saveProduct = async (draft: ProductDraft, isNew: boolean): Promise<WriteResult> => {
+  // A blank SKU on a new item is filled from the item naming series, so every
+  // item ends up with an identifier without anyone having to invent one. A SKU
+  // that was typed is kept exactly as typed.
+  const sku = isNew && !draft.sku.trim()
+    ? await nextDocumentName('products', draft.namingSeries ?? null, draft.storeId)
+    : draft.sku;
+  const row = productRow({ ...draft, sku });
+
+  return run(
     isNew
-      ? supabase.from('products').insert({ id: draft.id, stock: draft.stock, ...productRow(draft) })
-      : supabase.from('products').update(productRow(draft)).eq('id', draft.id),
+      ? supabase.from('products').insert({ id: draft.id, stock: draft.stock, ...row })
+      : supabase.from('products').update(row).eq('id', draft.id),
     isNew ? 'تعذر إضافة المنتج.' : 'تعذر حفظ تعديلات المنتج.',
   );
+};
 
 export const deleteProduct = async (id: string, images: string[] = []): Promise<WriteResult> => {
   const result = await run(supabase.from('products').delete().eq('id', id), 'تعذر حذف المنتج.');
@@ -136,12 +175,16 @@ export const adjustStock = async (
 
 export type CustomerDraft = Pick<
   Customer,
-  'id' | 'name' | 'phone' | 'whatsapp' | 'city' | 'address' | 'status'
->;
+  'id' | 'storeId' | 'name' | 'phone' | 'whatsapp' | 'city' | 'address' | 'status'
+> & {
+  /** Series to number a new customer with; the doctype default when absent. */
+  namingSeries?: string;
+};
 
 // `rating` is deliberately absent: it is not collected at creation time and an
 // update must not reset a rating the customer earned later.
 const customerRow = (draft: CustomerDraft) => trimRow({
+  store_id: draft.storeId,
   name: draft.name,
   phone: draft.phone,
   whatsapp: draft.whatsapp,
@@ -150,13 +193,20 @@ const customerRow = (draft: CustomerDraft) => trimRow({
   status: draft.status,
 });
 
-export const saveCustomer = (draft: CustomerDraft, isNew: boolean) =>
-  run(
+export const saveCustomer = async (draft: CustomerDraft, isNew: boolean): Promise<WriteResult> => {
+  // Numbered on creation only: a customer keeps the code they were given, the
+  // same rule orders follow. A failed numbering fails the save — saving without
+  // a code would leave a record the operator cannot refer to, and no sign why.
+  const code = isNew ? await nextDocumentName('customers', draft.namingSeries ?? null, draft.storeId) : undefined;
+  if (isNew && !code) return fail('تعذر توليد رقم العميل. حاول مرة أخرى.');
+
+  return run(
     isNew
-      ? supabase.from('customers').insert({ id: draft.id, ...customerRow(draft) })
+      ? supabase.from('customers').insert({ id: draft.id, code, ...customerRow(draft) })
       : supabase.from('customers').update(customerRow(draft)).eq('id', draft.id),
     isNew ? 'تعذر إضافة العميل.' : 'تعذر حفظ تعديلات العميل.',
   );
+};
 
 export const deleteCustomer = (id: string) =>
   run(
@@ -171,19 +221,19 @@ export const deleteCustomer = (id: string) =>
  * stores. An existing category with the same normalised spelling wins instead of
  * erroring — the user asked for that category to exist, and it does.
  */
-export const createCategory = async (name: string): Promise<string> => {
+export const createCategory = async (name: string, storeId: string): Promise<string> => {
   const trimmed = name.trim();
   if (!trimmed) return '';
 
-  const { error } = await supabase.from('categories').insert({ id: newId(), name: trimmed });
+  const { error } = await supabase.from('categories').insert({ id: newId(), name: trimmed, store_id: storeId });
   if (!error) return trimmed;
 
   if (`${error.message ?? ''}`.includes('duplicate key')) {
-    // The unique index is on ar_normalize(name), so a collision means the
-    // normalised forms match while the raw text differs — "فاطمه" against
-    // "فاطمة". Matching on the raw text would therefore never find the row that
-    // caused the collision; the comparison has to be normalised too.
-    const { data } = await supabase.from('categories').select('name');
+    // The unique index is on (store_id, ar_normalize(name)), so a collision
+    // means the normalised forms match while the raw text differs — "فاطمه"
+    // against "فاطمة". Matching on the raw text would never find the row that
+    // caused it, and searching every store would find another store's.
+    const { data } = await supabase.from('categories').select('name').eq('store_id', storeId);
     const target = normalizeArabic(trimmed);
     const existing = (data ?? []).find(row => normalizeArabic(row.name as string) === target);
     return (existing?.name as string) ?? trimmed;
@@ -206,6 +256,10 @@ export interface OrderDraft {
   deliveryFee: number;
   notes: string;
   agentId: string;
+  /** The zone the order goes to — what the rep's commission is priced from. */
+  zoneId: string;
+  /** Which naming series numbers this order; the doctype default when blank. */
+  namingSeries?: string;
 }
 
 /**
@@ -225,44 +279,94 @@ export const createOrder = async (draft: OrderDraft): Promise<WriteResult> => {
     p_delivery_fee: draft.deliveryFee,
     p_notes: draft.notes.trim(),
     p_agent_id: draft.agentId || null,
+    p_zone_id: draft.zoneId || null,
+    p_naming_series: draft.namingSeries || null,
   });
 
   if (!error) return ok;
   console.error('createOrder failed', error);
+  return fail(orderFailure(error, 'تعذر إنشاء الطلب.'));
+};
 
+/** Shared reading of what Postgres refused, in the words the operator needs. */
+const orderFailure = (error: { message?: string }, fallback: string): string => {
   const raw = `${error.message ?? ''}`;
   if (raw.includes('INSUFFICIENT_STOCK')) {
-    const product = raw.split('INSUFFICIENT_STOCK:')[1]?.split('"')[0]?.trim();
-    return fail(product ? `الكمية غير كافية من "${product}".` : 'الكمية المطلوبة غير متوفرة في المخزون.');
+    // Postgres interpolates the bare product name and may append its own lines,
+    // so the name ends at the first quote OR newline — splitting on the quote
+    // alone would print the whole rest of the error at the operator.
+    const product = raw.split('INSUFFICIENT_STOCK:')[1]?.split(/["\n]/)[0]?.trim();
+    return product ? `الكمية غير كافية من "${product}".` : 'الكمية المطلوبة غير متوفرة في المخزون.';
   }
-  if (raw.includes('EMPTY_ORDER')) return fail('أضف منتجاً واحداً على الأقل.');
-  if (raw.includes('duplicate key')) return fail('رقم الطلب مستخدم بالفعل. أعد المحاولة.');
-  return fail('تعذر إنشاء الطلب.');
+  if (raw.includes('EMPTY_ORDER')) return 'أضف منتجاً واحداً على الأقل.';
+  if (raw.includes('NO_SUCH_ORDER')) return 'الطلب لم يعد موجوداً.';
+  if (raw.includes('duplicate key')) return 'رقم الطلب مستخدم بالفعل. أعد المحاولة.';
+  return fallback;
+};
+
+/**
+ * Editing an existing order.
+ *
+ * The whole edit is one Postgres transaction: the order row, the stock of every
+ * item whose quantity changed, and a compensating ledger row per movement. The
+ * audit trigger on `orders` records the before/after of the row itself, so an
+ * edited order can be explained afterwards — which is the point of editing
+ * through a transaction rather than a plain update.
+ *
+ * Status is not part of it: that is changed from the orders table, and two
+ * writers for one field is how they disagree.
+ */
+export const updateOrder = async (draft: Omit<OrderDraft, 'orderNumber' | 'storeId'>): Promise<WriteResult> => {
+  const { error } = await supabase.rpc('update_order_with_stock', {
+    p_id: draft.id,
+    p_customer_id: draft.customerId,
+    p_customer_name: draft.customerName.trim(),
+    p_items: draft.items.map(item => trimRow(item as unknown as Record<string, unknown>)),
+    p_discount: draft.discount,
+    p_delivery_fee: draft.deliveryFee,
+    p_notes: draft.notes.trim(),
+    p_agent_id: draft.agentId || null,
+    p_zone_id: draft.zoneId || null,
+  });
+
+  if (!error) return ok;
+  console.error('updateOrder failed', error);
+  return fail(orderFailure(error, 'تعذر حفظ تعديلات الطلب.'));
 };
 
 // ---- sales representatives ----
 
 export type SalesRepDraft = Pick<
-  SalesRep, 'id' | 'name' | 'phone' | 'whatsapp' | 'zone' | 'commission' | 'active' | 'note'
->;
+  SalesRep, 'id' | 'storeId' | 'name' | 'phone' | 'whatsapp' | 'zones' | 'commission' | 'active' | 'note'
+> & {
+  /** Series to number a new rep with; the doctype default when absent. */
+  namingSeries?: string;
+};
 
 const salesRepRow = (draft: SalesRepDraft) => trimRow({
+  store_id: draft.storeId,
   name: draft.name,
   phone: draft.phone,
   whatsapp: draft.whatsapp,
-  zone: draft.zone,
+  // De-duplicated: the same zone twice covers nothing extra, and would read as
+  // two zones on the rep's card.
+  zones: [...new Set(draft.zones.map(zone => zone.trim()).filter(Boolean))],
   commission: draft.commission,
   active: draft.active,
   note: draft.note,
 });
 
-export const saveSalesRep = (draft: SalesRepDraft, isNew: boolean) =>
-  run(
+export const saveSalesRep = async (draft: SalesRepDraft, isNew: boolean): Promise<WriteResult> => {
+  const code = isNew ? await nextDocumentName('sales_reps', draft.namingSeries ?? null, draft.storeId) : undefined;
+  if (isNew && !code) return fail('تعذر توليد رقم المندوب. حاول مرة أخرى.');
+
+  return run(
     isNew
-      ? supabase.from('sales_reps').insert({ id: draft.id, ...salesRepRow(draft) })
+      ? supabase.from('sales_reps').insert({ id: draft.id, code, ...salesRepRow(draft) })
       : supabase.from('sales_reps').update(salesRepRow(draft)).eq('id', draft.id),
     isNew ? 'تعذر إضافة المندوب.' : 'تعذر حفظ تعديلات المندوب.',
   );
+};
 
 /**
  * Orders keep their history: the foreign key is ON DELETE SET NULL, so deleting
@@ -280,10 +384,45 @@ export const setOrderAgent = (orderIds: string[], agentId: string | null) =>
 // ---- delivery zones ----
 
 export type ZoneDraft = Pick<
-  DeliveryZone, 'id' | 'code' | 'name' | 'region' | 'capital' | 'fee' | 'deliveryTimeDays' | 'active'
->;
+  DeliveryZone,
+  'id' | 'code' | 'name' | 'region' | 'capital' | 'fee' | 'deliveryTimeDays' | 'active'
+  | 'commissionType' | 'commissionValue'
+> & {
+  /** Null when the row being edited is one of the shared defaults. */
+  storeId?: string | null;
+};
 
-export const saveZone = (draft: ZoneDraft, isNew: boolean) => {
+/**
+ * Saving a zone, copy-on-write.
+ *
+ * The 22 Libyan zones are a shared catalogue every store starts from. Editing
+ * one from inside a store must not change what other stores see, so the first
+ * edit copies that default into the store and the edit lands on the copy —
+ * `zone_for_store` does the copying in Postgres, where a second tab doing the
+ * same thing at the same moment cannot produce two copies.
+ *
+ * A zone the store created, or has already copied, is edited in place.
+ */
+export const saveZone = async (
+  draft: ZoneDraft,
+  isNew: boolean,
+  storeId: string | null,
+): Promise<WriteResult> => {
+  let targetId = draft.id;
+
+  if (!isNew && !draft.storeId) {
+    if (!storeId) return fail('افتح متجراً لتعديل مناطق التوصيل.');
+    const { data, error } = await supabase.rpc('zone_for_store', {
+      p_zone_id: draft.id,
+      p_store_id: storeId,
+    });
+    if (error) {
+      console.error('zone_for_store failed', error);
+      return fail('تعذر تجهيز نسخة المنطقة الخاصة بهذا المتجر.');
+    }
+    targetId = data as string;
+  }
+
   const code = draft.code.trim();
   const row = trimRow({
     name: draft.name,
@@ -292,22 +431,48 @@ export const saveZone = (draft: ZoneDraft, isNew: boolean) => {
     fee: draft.fee,
     delivery_time_days: draft.deliveryTimeDays,
     active: draft.active,
+    commission_type: draft.commissionType,
+    // A rule of 'none' carries no number; storing whatever was last typed would
+    // resurrect it the moment someone switched the type back.
+    commission_value: draft.commissionType === 'none' ? 0 : draft.commissionValue,
     // A blank code is omitted rather than sent: the insert trigger then numbers
     // the zone, and an update leaves the existing number alone.
     ...(code ? { code } : {}),
   });
   return run(
     isNew
-      ? supabase.from('delivery_zones').insert({ id: draft.id, ...row })
-      : supabase.from('delivery_zones').update(row).eq('id', draft.id),
+      // A zone a store adds belongs to that store, not to the shared catalogue.
+      ? supabase.from('delivery_zones').insert({ id: draft.id, store_id: storeId, ...row })
+      : supabase.from('delivery_zones').update(row).eq('id', targetId),
     isNew ? 'تعذر إضافة المنطقة.' : 'تعذر حفظ تعديلات المنطقة.',
   ).then(result =>
     !result.ok && code ? { ok: false, message: `تعذر الحفظ. قد يكون رقم المنطقة "${code}" مستخدماً بالفعل.` } : result,
   );
 };
 
-export const deleteZone = (id: string) =>
-  run(supabase.from('delivery_zones').delete().eq('id', id), 'تعذر حذف المنطقة.');
+/**
+ * Removing a zone from a store's list.
+ *
+ * A zone the store owns is deleted outright. A shared default cannot be — it
+ * belongs to every store — so it is hidden from this store the only honest way:
+ * the store takes its copy and deactivates it. Other stores keep the default.
+ */
+export const deleteZone = async (zone: DeliveryZone, storeId: string | null): Promise<WriteResult> => {
+  if (zone.storeId) {
+    return run(supabase.from('delivery_zones').delete().eq('id', zone.id), 'تعذر حذف المنطقة.');
+  }
+  if (!storeId) return fail('افتح متجراً لتعديل مناطق التوصيل.');
+
+  const { data, error } = await supabase.rpc('zone_for_store', { p_zone_id: zone.id, p_store_id: storeId });
+  if (error) {
+    console.error('zone_for_store failed', error);
+    return fail('تعذر إيقاف المنطقة لهذا المتجر.');
+  }
+  return run(
+    supabase.from('delivery_zones').update({ active: false }).eq('id', data as string),
+    'تعذر إيقاف المنطقة لهذا المتجر.',
+  );
+};
 
 export const setOrderStatus = (ids: string[], status: OrderStatus) =>
   run(

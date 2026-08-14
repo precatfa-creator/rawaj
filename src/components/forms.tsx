@@ -4,6 +4,7 @@ import { ErrorNote } from './Confirm';
 import { Combobox } from './Combobox';
 import { ImageUploader } from './ImageUploader';
 import { useAppStore } from '../store';
+import { splitList } from '../lib/text';
 import {
   createCategory, newId, saveCustomer, saveProduct, saveSalesRep, saveStore, saveZone,
   type CustomerDraft, type ProductDraft, type SalesRepDraft, type WriteResult, type ZoneDraft,
@@ -26,6 +27,56 @@ const useSubmit = (onDone: () => void) => {
   };
 
   return { busy, error, setError, submit };
+};
+
+/**
+ * The series a new document will be numbered from.
+ *
+ * Frappe puts this on the form itself, and for the same reason: the person
+ * creating the document is the one who knows whether it belongs in this year's
+ * run or in a separate one. Hidden while editing — a document keeps the number
+ * it was given.
+ */
+export const NamingSeriesField: React.FC<{
+  doctype: string;
+  value: string;
+  onChange: (value: string) => void;
+  label?: string;
+  hint?: string;
+}> = ({ doctype, value, onChange, label = 'تسلسل الترقيم', hint }) => {
+  const { documentNaming } = useAppStore();
+  const config = documentNaming.find(item => item.doctype === doctype);
+  if (!config) return null;
+
+  return (
+    <div>
+      <Combobox
+        showLabel
+        label={label}
+        value={value || config.defaultSeries}
+        onChange={onChange}
+        options={config.series.map(series => ({
+          value: series,
+          label: series,
+          hint: describeSeries(series),
+        }))}
+      />
+      {hint && <p className="text-xs text-surface-500 mt-1.5">{hint}</p>}
+    </div>
+  );
+};
+
+/** `ORD-.YYYY.-.####` reads as `ORD-2026-0001` to everyone except its author. */
+export const describeSeries = (series: string): string => {
+  const now = new Date();
+  const prefix = series
+    .replace('.YYYY.', String(now.getFullYear()))
+    .replace('.YY.', String(now.getFullYear()).slice(2))
+    .replace('.MM.', `${now.getMonth() + 1}`.padStart(2, '0'))
+    .replace('.DD.', `${now.getDate()}`.padStart(2, '0'))
+    .replace(/\.?#+$/, '');
+  const width = series.match(/#+$/)?.[0].length ?? 4;
+  return `${prefix}${'1'.padStart(width, '0')}`;
 };
 
 const Footer: React.FC<{ busy: boolean; onCancel: () => void; label: string }> = ({ busy, onCancel, label }) => (
@@ -64,8 +115,13 @@ export const ZoneForm: React.FC<{
   initialName?: string;
 }> = ({ open, zone, onClose, onCreated, initialName = '' }) => {
   const isNew = !zone;
+  const { activeStoreId } = useAppStore();
+  // A default belongs to every store, so editing it here produces this store's
+  // own copy. Worth saying out loud on the form rather than surprising someone.
+  const isSharedDefault = !isNew && !zone?.storeId;
   const [draft, setDraft] = useState<ZoneDraft>({
-    id: '', code: '', name: '', region: 'tripolitania', capital: '', fee: 0, deliveryTimeDays: 3, active: true,
+    id: '', code: '', name: '', region: 'tripolitania', capital: '', fee: 0, deliveryTimeDays: 3,
+    active: true, commissionType: 'none', commissionValue: 0,
   });
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
@@ -84,6 +140,9 @@ export const ZoneForm: React.FC<{
       fee: zone?.fee ?? 0,
       deliveryTimeDays: zone?.deliveryTimeDays ?? 3,
       active: zone?.active ?? true,
+      commissionType: zone?.commissionType ?? 'none',
+      commissionValue: zone?.commissionValue ?? 0,
+      storeId: zone?.storeId ?? null,
     });
   }
   if (!open && seeded !== null) setSeeded(null);
@@ -111,13 +170,18 @@ export const ZoneForm: React.FC<{
         onSubmit={async event => {
           event.preventDefault();
           setBusy(true); setError('');
-          const result = await saveZone(draft, isNew);
+          const result = await saveZone(draft, isNew, activeStoreId);
           setBusy(false);
           if (!result.ok) { setError(result.message ?? ''); return; }
           if (isNew) onCreated?.(draft.name.trim());
           onClose();
         }}
       >
+        {isSharedDefault && (
+          <p className="text-xs text-primary-900 bg-primary-50 border border-primary-200 rounded-xl p-3 leading-relaxed">
+            هذه منطقة من القائمة المشتركة. الحفظ ينشئ نسخة خاصة بهذا المتجر ولا يغيّر ما تراه المتاجر الأخرى.
+          </p>
+        )}
         <div className="grid grid-cols-1 sm:grid-cols-[8rem_1fr] gap-4">
           <Field label="رقم المنطقة" hint={isNew ? 'يُرقَّم تلقائياً.' : undefined}>
             <input
@@ -150,6 +214,41 @@ export const ZoneForm: React.FC<{
           <Field label="مدة التوصيل (أيام)">
             <input type="number" min={1} value={draft.deliveryTimeDays} onChange={e => set('deliveryTimeDays', Number(e.target.value))} className={fieldClass} />
           </Field>
+        </div>
+
+        {/* The rep's cut comes out of this zone's delivery fee. 'none' leaves the
+            rep's own flat commission in charge, which is what every zone meant
+            before this field existed. */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <Combobox
+            showLabel
+            label="عمولة المندوب"
+            value={draft.commissionType}
+            onChange={value => set('commissionType', value as ZoneDraft['commissionType'])}
+            options={[
+              { value: 'none', label: 'عمولة المندوب الثابتة' },
+              { value: 'percent', label: 'نسبة من رسوم التوصيل' },
+              { value: 'fixed', label: 'مبلغ ثابت لكل طلب' },
+            ]}
+          />
+          {draft.commissionType !== 'none' && (
+            <Field
+              label={draft.commissionType === 'percent' ? 'النسبة (%)' : 'المبلغ (د.ل)'}
+              hint={draft.commissionType === 'percent'
+                ? `${Math.round(draft.fee * draft.commissionValue / 100).toLocaleString('en-US')} د.ل على رسوم ${draft.fee}`
+                : 'عن كل طلب مسلَّم في هذه المنطقة.'}
+            >
+              <input
+                type="number"
+                min={0}
+                max={draft.commissionType === 'percent' ? 100 : undefined}
+                step="0.5"
+                value={draft.commissionValue}
+                onChange={e => set('commissionValue', Number(e.target.value))}
+                className={fieldClass}
+              />
+            </Field>
+          )}
         </div>
         <label className="flex items-center gap-3 bg-surface-50 border border-surface-200 rounded-xl px-4 py-3 cursor-pointer">
           <input type="checkbox" checked={draft.active} onChange={e => set('active', e.target.checked)} className="w-4 h-4 rounded border-surface-300 text-primary-700 focus:ring-primary-500" />
@@ -231,8 +330,12 @@ export const ProductForm: React.FC<{
   const { categories } = useAppStore();
   const [draft, setDraft] = useState<ProductDraft>({
     id: '', storeId, name: '', description: '', sku: '', defaultSerial: '', category: '',
-    purchasePrice: 0, sellingPrice: 0, stock: 0, minStock: 0, status: 'active', images: [],
+    purchasePrice: 0, sellingPrice: 0, stock: 0, minStock: 0, status: 'active', images: [], sizes: [],
+    namingSeries: '',
   });
+  // Held as the text the user is typing, not as the parsed array: splitting on
+  // every keystroke would delete the separator the moment it was typed.
+  const [sizesText, setSizesText] = useState('');
   const { busy, error, submit } = useSubmit(onClose);
 
   const [seeded, setSeeded] = useState<string | null>(null);
@@ -253,7 +356,10 @@ export const ProductForm: React.FC<{
       minStock: product?.minStock ?? 0,
       status: product?.status ?? 'active',
       images: product?.images ?? [],
+      sizes: product?.sizes ?? [],
+      namingSeries: '',
     });
+    setSizesText((product?.sizes ?? []).join('، '));
   }
   if (!open && seeded !== null) setSeeded(null);
 
@@ -275,15 +381,26 @@ export const ProductForm: React.FC<{
       onClose={onClose}
       footer={<Footer busy={busy} onCancel={onClose} label={isNew ? 'إضافة المنتج' : 'حفظ التعديلات'} />}
     >
-      <form id="entity-form" className="grid grid-cols-1 sm:grid-cols-2 gap-4" onSubmit={submit(() => saveProduct(draft, isNew))}>
+      <form
+        id="entity-form"
+        className="grid grid-cols-1 sm:grid-cols-2 gap-4"
+        onSubmit={submit(() => saveProduct({ ...draft, sizes: splitList(sizesText) }, isNew))}
+      >
         <div className="sm:col-span-2">
           <Field label="اسم المنتج">
             <input value={draft.name} onChange={e => set('name', e.target.value)} required className={fieldClass} />
           </Field>
         </div>
-        <Field label="رمز SKU">
+        <Field label="رمز SKU" hint={isNew ? 'اتركه فارغاً ليُولَّد من تسلسل الترقيم.' : undefined}>
           <input value={draft.sku} onChange={e => set('sku', e.target.value)} dir="ltr" className={fieldClass} />
         </Field>
+        {isNew && !draft.sku.trim() && (
+          <NamingSeriesField
+            doctype="products"
+            value={draft.namingSeries ?? ''}
+            onChange={value => set('namingSeries', value)}
+          />
+        )}
         <Field label="الرقم التسلسلي الافتراضي" hint="يُستخدم عند عدم تسجيل رقم خاص بالقطعة.">
           <input value={draft.defaultSerial} onChange={e => set('defaultSerial', e.target.value)} dir="ltr" className={fieldClass} />
         </Field>
@@ -295,7 +412,7 @@ export const ProductForm: React.FC<{
           value={draft.category}
           onChange={value => set('category', value)}
           options={categoryOptions}
-          onCreate={createCategory}
+          onCreate={name => createCategory(name, storeId)}
           createLabel={term => `إضافة فئة "${term}"`}
           placeholder="اختر فئة…"
         />
@@ -327,6 +444,19 @@ export const ProductForm: React.FC<{
         <Field label="حد التنبيه">
           <input type="number" min={0} value={draft.minStock} onChange={e => set('minStock', Number(e.target.value))} required className={fieldClass} />
         </Field>
+        {/* One quantity per item, not per size: the ledger counts pieces, and
+            splitting stock by size would need a row per variant. The sizes
+            listed here are what an order line can choose from. */}
+        <div className="sm:col-span-2">
+          <Field label="المقاسات" hint="افصل بينها بفاصلة — تظهر كخيارات عند إضافة المنتج إلى طلب. اتركها فارغة إن كان المنتج بمقاس واحد.">
+            <input
+              value={sizesText}
+              onChange={e => setSizesText(e.target.value)}
+              placeholder="S، M، L، XL"
+              className={fieldClass}
+            />
+          </Field>
+        </div>
         <Combobox
           showLabel
           label="الحالة"
@@ -359,9 +489,10 @@ export const SalesRepForm: React.FC<{
   open: boolean; rep: SalesRep | null; onClose: () => void;
 }> = ({ open, rep, onClose }) => {
   const isNew = !rep;
-  const { zones } = useAppStore();
+  const { zones, activeStoreId } = useAppStore();
   const [draft, setDraft] = useState<SalesRepDraft>({
-    id: '', name: '', phone: '', whatsapp: '', zone: '', commission: 0, active: true, note: '',
+    id: '', storeId: '', name: '', phone: '', whatsapp: '', zones: [], commission: 0,
+    active: true, note: '', namingSeries: '',
   });
   const { busy, error, submit } = useSubmit(onClose);
 
@@ -371,13 +502,16 @@ export const SalesRepForm: React.FC<{
     setSeeded(key);
     setDraft({
       id: rep?.id ?? newId(),
+      // A rep works for the store they were added in.
+      storeId: rep?.storeId ?? activeStoreId ?? '',
       name: rep?.name ?? '',
       phone: rep?.phone ?? '',
       whatsapp: rep?.whatsapp ?? '',
-      zone: rep?.zone ?? '',
+      zones: rep?.zones ?? [],
       commission: rep?.commission ?? 0,
       active: rep?.active ?? true,
       note: rep?.note ?? '',
+      namingSeries: '',
     });
   }
   if (!open && seeded !== null) setSeeded(null);
@@ -385,10 +519,13 @@ export const SalesRepForm: React.FC<{
   const set = <K extends keyof SalesRepDraft>(field: K, value: SalesRepDraft[K]) =>
     setDraft(current => ({ ...current, [field]: value }));
 
-  const zoneOptions = [
-    { value: '', label: 'كل المناطق' },
-    ...zones.map(zone => ({ value: zone.name, label: zone.name, hint: zone.code })),
-  ];
+  const toggleZone = (name: string) =>
+    setDraft(current => ({
+      ...current,
+      zones: current.zones.includes(name)
+        ? current.zones.filter(zone => zone !== name)
+        : [...current.zones, name],
+    }));
 
   return (
     <Modal
@@ -399,6 +536,19 @@ export const SalesRepForm: React.FC<{
       footer={<Footer busy={busy} onCancel={onClose} label={isNew ? 'إضافة المندوب' : 'حفظ التعديلات'} />}
     >
       <form id="entity-form" className="grid grid-cols-1 sm:grid-cols-2 gap-4" onSubmit={submit(() => saveSalesRep(draft, isNew))}>
+        {isNew ? (
+          <NamingSeriesField
+            doctype="sales_reps"
+            value={draft.namingSeries ?? ''}
+            onChange={value => set('namingSeries', value)}
+            label="تسلسل ترقيم المندوب"
+          />
+        ) : rep?.code ? (
+          <Field label="رقم المندوب">
+            <input value={rep.code} readOnly dir="ltr" tabIndex={-1}
+              className={`${fieldClass} bg-surface-100 text-surface-500 cursor-not-allowed`} />
+          </Field>
+        ) : null}
         <div className="sm:col-span-2">
           <Field label="الاسم">
             <input value={draft.name} onChange={e => set('name', e.target.value)} required className={fieldClass} />
@@ -410,14 +560,50 @@ export const SalesRepForm: React.FC<{
         <Field label="واتساب">
           <input value={draft.whatsapp} onChange={e => set('whatsapp', e.target.value)} dir="ltr" type="tel" inputMode="tel" className={fieldClass} />
         </Field>
-        <Combobox
-          showLabel
-          label="منطقة التغطية"
-          value={draft.zone}
-          onChange={value => set('zone', value)}
-          options={zoneOptions}
-        />
-        <Field label="العمولة لكل طلب مسلَّم (د.ل)">
+        {/* A rep covers as many zones as they cover — one رقم واحد per rep was
+            the thing being worked around by leaving the field empty. Selecting
+            none still means "every zone", which is what empty always meant. */}
+        <div className="sm:col-span-2">
+          <span className="block text-sm font-bold text-surface-700 mb-1.5">مناطق التغطية</span>
+          {zones.length === 0 ? (
+            <p className="text-sm text-surface-500 bg-surface-50 border border-surface-200 rounded-xl p-3">
+              لا توجد مناطق بعد. أضف منطقة توصيل أولاً.
+            </p>
+          ) : (
+            <>
+              <div className="flex flex-wrap gap-2 max-h-40 overflow-y-auto border border-surface-200 rounded-xl p-3 bg-surface-50">
+                {zones.map(zone => {
+                  const picked = draft.zones.includes(zone.name);
+                  return (
+                    <label
+                      key={zone.id}
+                      className={`inline-flex items-center gap-2 rounded-lg border px-3 py-1.5 text-sm font-bold cursor-pointer transition-colors ${
+                        picked
+                          ? 'bg-primary-50 border-primary-300 text-primary-900'
+                          : 'bg-white border-surface-200 text-surface-700 hover:border-surface-300'
+                      }`}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={picked}
+                        onChange={() => toggleZone(zone.name)}
+                        className="w-4 h-4 rounded border-surface-300 text-primary-700 focus:ring-primary-500"
+                      />
+                      <span className="tabular-nums text-xs text-surface-500">{zone.code}</span>
+                      {zone.name}
+                    </label>
+                  );
+                })}
+              </div>
+              <p className="text-xs text-surface-500 mt-1.5">
+                {draft.zones.length === 0
+                  ? 'بدون تحديد يغطي المندوب كل المناطق.'
+                  : `${draft.zones.length} منطقة محددة.`}
+              </p>
+            </>
+          )}
+        </div>
+        <Field label="العمولة لكل طلب مسلَّم (د.ل)" hint="تُستخدم للمناطق التي لا تحدّد عمولة خاصة بها.">
           <input
             type="number" min={0} step="0.5" value={draft.commission}
             onChange={e => set('commission', Number(e.target.value))}
@@ -451,9 +637,10 @@ export const CustomerForm: React.FC<{
   open: boolean; customer: Customer | null; onClose: () => void;
 }> = ({ open, customer, onClose }) => {
   const isNew = !customer;
-  const { zones } = useAppStore();
+  const { zones, activeStoreId } = useAppStore();
   const [draft, setDraft] = useState<CustomerDraft>({
-    id: '', name: '', phone: '', whatsapp: '', city: '', address: '', status: 'active',
+    id: '', storeId: '', name: '', phone: '', whatsapp: '', city: '', address: '',
+    status: 'active', namingSeries: '',
   });
   const { busy, error, submit } = useSubmit(onClose);
   const [newZoneName, setNewZoneName] = useState<string | null>(null);
@@ -465,12 +652,15 @@ export const CustomerForm: React.FC<{
     setSeeded(key);
     setDraft({
       id: customer?.id ?? newId(),
+      // The same person shopping at two stores is two customers, one per store.
+      storeId: customer?.storeId ?? activeStoreId ?? '',
       name: customer?.name ?? '',
       phone: customer?.phone ?? '',
       whatsapp: customer?.whatsapp ?? '',
       city: customer?.city ?? '',
       address: customer?.address ?? '',
       status: customer?.status ?? 'active',
+      namingSeries: '',
     });
   }
   if (!open && seeded !== null) setSeeded(null);
@@ -518,6 +708,19 @@ export const CustomerForm: React.FC<{
       footer={<Footer busy={busy} onCancel={onClose} label={isNew ? 'إضافة العميل' : 'حفظ التعديلات'} />}
     >
       <form id="entity-form" className="grid grid-cols-1 sm:grid-cols-2 gap-4" onSubmit={submit(() => saveCustomer(draft, isNew))}>
+        {isNew ? (
+          <NamingSeriesField
+            doctype="customers"
+            value={draft.namingSeries ?? ''}
+            onChange={value => set('namingSeries', value)}
+            label="تسلسل ترقيم العميل"
+          />
+        ) : customer?.code ? (
+          <Field label="رقم العميل">
+            <input value={customer.code} readOnly dir="ltr" tabIndex={-1}
+              className={`${fieldClass} bg-surface-100 text-surface-500 cursor-not-allowed`} />
+          </Field>
+        ) : null}
         <div className="sm:col-span-2">
           <Field label="الاسم">
             <input value={draft.name} onChange={e => set('name', e.target.value)} required className={fieldClass} />

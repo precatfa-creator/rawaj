@@ -4,6 +4,7 @@ import { AppProvider, useAppStore } from './store';
 import { MainLayout } from './layouts/MainLayout';
 import { Portal, type PortalTab } from './pages/Portal';
 import { Products } from './pages/Products';
+import { StockMovements } from './pages/StockMovements';
 import { Orders } from './pages/Orders';
 import { Customers } from './pages/Customers';
 import { Zones } from './pages/Zones';
@@ -11,6 +12,7 @@ import { SalesReps } from './pages/SalesReps';
 import { Finances } from './pages/Finances';
 import { Reports } from './pages/Reports';
 import { AuditLog } from './pages/AuditLog';
+import { DocumentNamingSettings } from './pages/DocumentNaming';
 import { Login } from './pages/Login';
 import { isSupabaseConfigured, supabase } from './db/supabase';
 import { DEFAULT_STORE_SECTION, useRoute } from './lib/route';
@@ -57,10 +59,14 @@ const Workspace: React.FC<{ profile: Profile }> = ({ profile }) => {
           tab={portalTab}
           onTabChange={tab => navigate({ view: tab, storeId: null, page: 0 })}
           showUsers={route.view === 'users'}
-          auditPanel={route.view === 'audit' && profile.role === 'admin'
-            ? <AuditLog page={route.page} onPage={p => navigate({ view: 'audit', storeId: null, page: p })} />
-            : null}
+          panel={profile.role !== 'admin' ? null
+            : route.view === 'audit'
+              ? <AuditLog page={route.page} onPage={p => navigate({ view: 'audit', storeId: null, page: p })} />
+              : route.view === 'naming'
+                ? <DocumentNamingSettings />
+                : null}
           onShowAudit={() => navigate({ view: 'audit', storeId: null, page: 0 })}
+          onShowNaming={() => navigate({ view: 'naming', storeId: null, page: 0 })}
           onShowUsers={show => navigate({ view: show ? 'users' : 'stats', storeId: null, page: 0 })}
           onOpenStore={id => navigate({ view: DEFAULT_STORE_SECTION, storeId: id, page: 0 })}
         />
@@ -82,6 +88,7 @@ const Workspace: React.FC<{ profile: Profile }> = ({ profile }) => {
   const renderContent = () => {
     switch (route.view) {
       case 'products': return <Products {...paging} />;
+      case 'movements': return <StockMovements {...paging} />;
       case 'orders': return <Orders {...paging} />;
       case 'customers': return <Customers {...paging} />;
       case 'zones': return <Zones />;

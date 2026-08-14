@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import { MapPin, Plus, Pencil, Trash2, Truck, Search } from 'lucide-react';
 import { motion } from 'motion/react';
 import { useAppStore } from '../store';
@@ -18,12 +18,16 @@ const regionOptions = [
 ];
 
 export const Zones: React.FC = () => {
-  const { zones, pickerCustomers: customers } = useAppStore();
+  const { zones, pickerCustomers: customers, activeStoreId } = useAppStore();
   const [search, setSearch] = useState('');
   const [region, setRegion] = useState('all');
   const [editing, setEditing] = useState<DeliveryZone | null>(null);
   const [creating, setCreating] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState<DeliveryZone | null>(null);
+
+  // Rebuilt only when the store changes; a new object per render would restart
+  // BulkBar's state on every keystroke in the search box.
+  const bulkSpec = useMemo(() => zoneBulk(activeStoreId), [activeStoreId]);
 
   const visible = zones
     .filter(zone => region === 'all' || zone.region === region)
@@ -77,7 +81,7 @@ export const Zones: React.FC = () => {
       </Card>
 
       <BulkBar
-        spec={zoneBulk}
+        spec={bulkSpec}
         title="استيراد وتصدير المناطق"
         hint="يقبل Excel و CSV وملفات Google Sheets المصدَّرة. المنطقة الموجودة تُحدَّث، والجديدة تُضاف. الملف المصدَّر يصلح كقالب معبَّأ — عدّله وأعد استيراده. اترك رقم المنطقة فارغاً ليُرقَّم تلقائياً."
       />
@@ -127,9 +131,16 @@ export const Zones: React.FC = () => {
                   <Pill tone={zone.active ? 'bg-emerald-50 text-emerald-800 border-emerald-200' : 'bg-surface-100 text-surface-600 border-surface-200'}>
                     {zone.active ? 'متاح' : 'موقوف'}
                   </Pill>
+                  {/* Which rows this store has taken over, and which are still
+                      the shared ones every store sees. */}
+                  <Pill tone={zone.storeId
+                    ? 'bg-primary-50 text-primary-800 border-primary-200'
+                    : 'bg-surface-100 text-surface-600 border-surface-200'}>
+                    {zone.storeId ? 'خاصة بهذا المتجر' : 'من القائمة المشتركة'}
+                  </Pill>
                 </div>
 
-                <dl className="grid grid-cols-2 gap-2 mt-4 pt-4 border-t border-surface-200/70 text-center">
+                <dl className="grid grid-cols-3 gap-2 mt-4 pt-4 border-t border-surface-200/70 text-center">
                   <div>
                     <dt className="text-xs text-surface-500">الرسوم</dt>
                     <dd className={`font-black text-sm mt-1 tabular-nums ${zone.fee > 0 ? 'text-surface-900' : 'text-surface-400'}`}>
@@ -139,6 +150,19 @@ export const Zones: React.FC = () => {
                   <div>
                     <dt className="text-xs text-surface-500">المدة</dt>
                     <dd className="font-black text-sm mt-1 text-surface-900 tabular-nums">{zone.deliveryTimeDays} أيام</dd>
+                  </div>
+                  <div>
+                    <dt className="text-xs text-surface-500">عمولة المندوب</dt>
+                    <dd className={`font-black text-sm mt-1 ${zone.commissionType === 'none' ? 'text-surface-400' : 'text-primary-800'}`}>
+                      {zone.commissionType === 'percent'
+                        ? money(zone.fee * zone.commissionValue / 100)
+                        : zone.commissionType === 'fixed'
+                          ? money(zone.commissionValue)
+                          : '—'}
+                      {zone.commissionType === 'percent' && (
+                        <span className="block text-xs font-bold text-surface-500 tabular-nums">{zone.commissionValue}%</span>
+                      )}
+                    </dd>
                   </div>
                 </dl>
               </Card>
@@ -154,12 +178,19 @@ export const Zones: React.FC = () => {
 
       <ZoneForm open={creating || editing !== null} zone={editing} onClose={() => { setCreating(false); setEditing(null); }} />
 
+      {/* A zone this store owns is deleted; one from the shared catalogue cannot
+          be — it belongs to every store — so it is switched off for this store
+          only, through a copy. The dialog says which of the two will happen. */}
       <Confirm
         open={confirmDelete !== null}
-        title="حذف المنطقة"
-        message={`سيتم حذف "${confirmDelete?.name ?? ''}" نهائياً.`}
-        confirmLabel="حذف"
-        onConfirm={() => deleteZone(confirmDelete?.id ?? '')}
+        title={confirmDelete?.storeId ? 'حذف المنطقة' : 'إيقاف المنطقة لهذا المتجر'}
+        message={confirmDelete?.storeId
+          ? `سيتم حذف "${confirmDelete?.name ?? ''}" نهائياً.`
+          : `"${confirmDelete?.name ?? ''}" من القائمة المشتركة. سيتم إيقافها لهذا المتجر فقط، وتبقى متاحة للمتاجر الأخرى.`}
+        confirmLabel={confirmDelete?.storeId ? 'حذف' : 'إيقاف'}
+        onConfirm={() => confirmDelete
+          ? deleteZone(confirmDelete, activeStoreId)
+          : Promise.resolve({ ok: true })}
         onClose={() => setConfirmDelete(null)}
       />
     </div>

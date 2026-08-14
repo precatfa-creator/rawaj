@@ -1,15 +1,18 @@
-import React, { useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import { useAppStore } from '../store';
-import { Plus, Search, Eye, Truck, CheckCircle2, ShoppingCart, Trash2, X } from 'lucide-react';
+import { Plus, Search, Eye, Truck, CheckCircle2, ShoppingCart, Trash2, X, Pencil, SlidersHorizontal } from 'lucide-react';
 import { motion } from 'motion/react';
 import { OrderStatus } from '../types';
 import { statusLabels } from '../lib/dashboardStats';
-import { PAGE_SIZE, useDimension, usePagedList } from '../lib/queries';
+import { PAGE_SIZE, useDimension, useOrderTotals, usePagedList } from '../lib/queries';
+import { emptyOrderFilters, isFiltered, orderRangeFilters, type OrderFilters } from '../lib/orderFilters';
 import { deleteOrders, setOrderAgent, setOrderStatus } from '../lib/mutations';
+import { orderBulk } from '../lib/bulk';
 import { Confirm, ErrorNote } from '../components/Confirm';
 import { OrderDetails, OrderForm } from '../components/orderForms';
 import { Combobox } from '../components/Combobox';
-import { Pagination } from '../components/ui';
+import { BulkBar } from '../components/BulkBar';
+import { Pagination, quietButton } from '../components/ui';
 import type { Order } from '../types';
 import type { PagedProps } from '../lib/route';
 
@@ -27,36 +30,67 @@ const statusStyles: Record<OrderStatus, string> = {
 
 const money = (value: number) => `${Math.round(value).toLocaleString('en-US')} د.ل`;
 
+const dateField =
+  'w-full bg-white border border-surface-200 rounded-xl px-3 py-2 text-sm font-bold tabular-nums focus:outline-none focus:ring-2 focus:ring-primary-500/30 focus:border-primary-500';
+
 export const Orders: React.FC<PagedProps> = ({ page, onPage }) => {
   const { stores, pickerProducts, pickerCustomers, zones, salesReps, activeStoreId } = useAppStore();
-  const [activeFilter, setActiveFilter] = useState<OrderStatus | 'all'>('all');
-  const [searchTerm, setSearchTerm] = useState('');
+  const [filters, setFilters] = useState<OrderFilters>(() => emptyOrderFilters(activeStoreId));
+  const [showFilters, setShowFilters] = useState(false);
   const [sort, setSort] = useState<'newest' | 'oldest'>('newest');
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [detailsId, setDetailsId] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
+  const [editing, setEditing] = useState<Order | null>(null);
   const [pendingId, setPendingId] = useState<string | null>(null);
   const [confirmDelete, setConfirmDelete] = useState<string[] | null>(null);
   const [error, setError] = useState('');
 
+  // The store comes from the shell, not from the filter bar, so it is refreshed
+  // rather than stored twice.
+  const active: OrderFilters = { ...filters, storeId: activeStoreId };
+
+  /** Any filter change invalidates the current offset. */
+  const set = <K extends keyof OrderFilters>(field: K, value: OrderFilters[K]) => {
+    setFilters(current => ({ ...current, [field]: value }));
+    onPage(0);
+  };
+
   const list = usePagedList<Order>({
     table: 'orders',
-    columns: 'id,orderNumber:order_number,storeId:store_id,customerId:customer_id,customerName:customer_name,items,subtotal,discount,deliveryFee:delivery_fee,total,status,notes,createdAt:created_at,deliveryDate:delivery_date,agentId:agent_id',
-    match: { store_id: activeStoreId ?? undefined, status: activeFilter === 'all' ? undefined : activeFilter },
-    search: searchTerm,
+    columns: 'id,orderNumber:order_number,storeId:store_id,customerId:customer_id,customerName:customer_name,items,subtotal,discount,deliveryFee:delivery_fee,total,status,notes,createdAt:created_at,deliveryDate:delivery_date,agentId:agent_id,zoneId:zone_id',
+    match: {
+      store_id: activeStoreId ?? undefined,
+      status: active.status || undefined,
+      agent_id: active.agentId || undefined,
+      zone_id: active.zoneId || undefined,
+    },
+    filters: orderRangeFilters(active),
+    search: active.search,
     orderBy: 'created_at',
     ascending: sort === 'oldest',
     page,
   });
   const visibleOrders = list.rows;
 
-  // Tab badges count the whole table per status. Counting the loaded page here
-  // would show plausible numbers that describe 24 rows instead of the store.
+  // Totals for every order the filters match, computed in Postgres. Summing the
+  // loaded page here would print a plausible number that describes 24 rows.
+  const totals = useOrderTotals(active);
+
+  // Tab badges count the whole table per status, and ignore the other filters —
+  // they are how you see what the other statuses hold.
   const statusCounts = new Map(useDimension('status', activeStoreId).map(r => [r.key, r.order_count]));
   const totalOrders = [...statusCounts.values()].reduce((sum, n) => sum + n, 0);
 
   const storeProducts = pickerProducts.filter(p => p.storeId === activeStoreId);
   const allVisibleSelected = visibleOrders.length > 0 && visibleOrders.every(o => selected.has(o.id));
+
+  // Rebuilt only when the store or the reference lists change; a new object per
+  // render would restart BulkBar's state on every keystroke in the search box.
+  const bulkSpec = useMemo(
+    () => orderBulk(activeStoreId ?? '', { zones, salesReps }),
+    [activeStoreId, zones, salesReps],
+  );
 
   const toggle = (id: string) =>
     setSelected(current => {
@@ -95,6 +129,8 @@ export const Orders: React.FC<PagedProps> = ({ page, onPage }) => {
   const actionButton =
     'inline-flex items-center justify-center min-w-11 min-h-11 md:min-w-0 md:min-h-0 p-2.5 md:p-1.5 rounded-lg transition-colors disabled:opacity-40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500';
 
+  const pageTotal = visibleOrders.reduce((sum, order) => sum + order.total, 0);
+
   return (
     <div className="space-y-6">
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
@@ -116,14 +152,15 @@ export const Orders: React.FC<PagedProps> = ({ page, onPage }) => {
       {/* Status tabs */}
       <div className="flex overflow-x-auto no-scrollbar gap-2 pb-2">
         {(['all', ...ALL_STATUSES] as const).map(status => {
+          const value = status === 'all' ? '' : status;
           const count = status === 'all' ? totalOrders : (statusCounts.get(status) ?? 0);
           return (
             <button
               key={status}
-              onClick={() => { setActiveFilter(status); onPage(0); }}
-              aria-pressed={activeFilter === status}
+              onClick={() => set('status', value)}
+              aria-pressed={active.status === value}
               className={`whitespace-nowrap px-4 py-2 rounded-xl font-bold text-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 ${
-                activeFilter === status ? 'bg-surface-900 text-white' : 'bg-surface-100 text-surface-600 hover:bg-surface-200'
+                active.status === value ? 'bg-surface-900 text-white' : 'bg-surface-100 text-surface-600 hover:bg-surface-200'
               }`}
             >
               {status === 'all' ? 'الكل' : statusLabels[status]} ({count})
@@ -131,6 +168,12 @@ export const Orders: React.FC<PagedProps> = ({ page, onPage }) => {
           );
         })}
       </div>
+
+      <BulkBar
+        spec={bulkSpec}
+        title="استيراد وتصدير الطلبات"
+        hint="يقبل Excel و CSV وملفات Google Sheets المصدَّرة. الطلب الموجود يُحدَّث، والجديد يُنشأ بنفس قواعد المخزون — المطابقة بالمعرّف ثم برقم الطلب. عمود المنتجات بالصيغة: SKU * الكمية @ السعر # المقاس، ويُفصل بين المنتجات بفاصلة منقوطة. العميل يجب أن يكون موجوداً مسبقاً، والإجمالي يُحسب من السطور."
+      />
 
       <div className="glass-card rounded-2xl overflow-hidden">
         <div className="p-4 border-b border-surface-200/50 flex flex-col md:flex-row gap-4">
@@ -140,8 +183,8 @@ export const Orders: React.FC<PagedProps> = ({ page, onPage }) => {
             </div>
             <input
               type="search"
-              value={searchTerm}
-              onChange={e => { setSearchTerm(e.target.value); onPage(0); }}
+              value={active.search}
+              onChange={e => set('search', e.target.value)}
               placeholder="ابحث برقم الطلب أو اسم العميل..."
               aria-label="ابحث في الطلبات"
               className="w-full bg-surface-50 border border-surface-200 rounded-xl py-2.5 pr-10 pl-4 focus:ring-2 focus:ring-primary-500/20 focus:border-primary-500 transition-all font-medium text-sm"
@@ -157,7 +200,76 @@ export const Orders: React.FC<PagedProps> = ({ page, onPage }) => {
             ]}
             className="md:w-48"
           />
+          <button
+            type="button"
+            onClick={() => setShowFilters(current => !current)}
+            aria-expanded={showFilters}
+            className={`${quietButton} md:w-auto ${isFiltered(active) ? 'border-primary-300 text-primary-800 bg-primary-50' : ''}`}
+          >
+            <SlidersHorizontal size={16} />
+            تصفية
+          </button>
         </div>
+
+        {showFilters && (
+          <div className="p-4 border-b border-surface-200/50 bg-surface-50/60 grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3">
+            <Combobox
+              showLabel
+              label="المنطقة"
+              value={active.zoneId}
+              onChange={value => set('zoneId', value)}
+              options={[
+                { value: '', label: 'كل المناطق' },
+                ...zones.map(zone => ({ value: zone.id, label: zone.name, hint: zone.code })),
+              ]}
+            />
+            <Combobox
+              showLabel
+              label="المندوب"
+              value={active.agentId}
+              onChange={value => set('agentId', value)}
+              options={[
+                { value: '', label: 'كل المندوبين' },
+                ...salesReps.map(rep => ({
+                  value: rep.id,
+                  label: rep.name,
+                  hint: rep.zones.length > 0 ? rep.zones.join('، ') : 'كل المناطق',
+                })),
+              ]}
+            />
+            <div className="grid grid-cols-2 gap-3">
+              <label className="block">
+                <span className="block text-sm font-bold text-surface-700 mb-1.5">من تاريخ</span>
+                <input type="date" value={active.from} onChange={e => set('from', e.target.value)} className={dateField} />
+              </label>
+              <label className="block">
+                <span className="block text-sm font-bold text-surface-700 mb-1.5">إلى تاريخ</span>
+                <input type="date" value={active.to} onChange={e => set('to', e.target.value)} className={dateField} />
+              </label>
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <label className="block">
+                <span className="block text-sm font-bold text-surface-700 mb-1.5">إجمالي من (د.ل)</span>
+                <input type="number" min={0} inputMode="decimal" value={active.minTotal} onChange={e => set('minTotal', e.target.value)} className={dateField} />
+              </label>
+              <label className="block">
+                <span className="block text-sm font-bold text-surface-700 mb-1.5">إلى (د.ل)</span>
+                <input type="number" min={0} inputMode="decimal" value={active.maxTotal} onChange={e => set('maxTotal', e.target.value)} className={dateField} />
+              </label>
+            </div>
+            <div className="flex items-end">
+              <button
+                type="button"
+                onClick={() => { setFilters(emptyOrderFilters(activeStoreId)); onPage(0); }}
+                disabled={!isFiltered(active)}
+                className={`${quietButton} disabled:opacity-50`}
+              >
+                <X size={16} />
+                مسح المرشّحات
+              </button>
+            </div>
+          </div>
+        )}
 
         {selected.size > 0 && (
           <div className="p-3 bg-primary-50 border-b border-primary-100 flex flex-wrap items-center gap-2">
@@ -183,7 +295,7 @@ export const Orders: React.FC<PagedProps> = ({ page, onPage }) => {
                   ...salesReps.filter(rep => rep.active).map(rep => ({
                     value: rep.id,
                     label: rep.name,
-                    hint: rep.zone || 'كل المناطق',
+                    hint: rep.zones.length > 0 ? rep.zones.join('، ') : 'كل المناطق',
                   })),
                 ]}
                 disabled={pendingId !== null}
@@ -260,7 +372,7 @@ export const Orders: React.FC<PagedProps> = ({ page, onPage }) => {
                     <td className="px-6 py-4">
                       <div className="flex items-center gap-1">
                         {order.items.slice(0, 2).map((item, idx) => (
-                          <div key={idx} className="w-8 h-8 rounded-lg bg-surface-100 overflow-hidden shrink-0 border border-surface-200" title={item.productName}>
+                          <div key={idx} className="w-8 h-8 rounded-lg bg-surface-100 overflow-hidden shrink-0 border border-surface-200" title={`${item.productName}${item.size ? ` · ${item.size}` : ''}`}>
                             {item.image && <img src={item.image} alt="" loading="lazy" className="w-full h-full object-cover" />}
                           </div>
                         ))}
@@ -294,6 +406,14 @@ export const Orders: React.FC<PagedProps> = ({ page, onPage }) => {
                           <Eye size={18} />
                         </button>
                         <button
+                          onClick={() => setEditing(order)}
+                          disabled={busy}
+                          className={`${actionButton} text-surface-500 hover:text-primary-700 hover:bg-primary-50`}
+                          aria-label={`تعديل ${order.orderNumber}`} title="تعديل الطلب"
+                        >
+                          <Pencil size={18} />
+                        </button>
+                        <button
                           onClick={() => applyStatus([order.id], 'shipped')}
                           disabled={busy || order.status === 'shipped'}
                           className={`${actionButton} text-surface-500 hover:text-indigo-700 hover:bg-indigo-50`}
@@ -323,6 +443,31 @@ export const Orders: React.FC<PagedProps> = ({ page, onPage }) => {
                 );
               })}
             </tbody>
+
+            {/* Two rows on purpose: what is on screen, and what the filters
+                actually select. Printing only the first is the mistake this
+                table is trying not to make. */}
+            {visibleOrders.length > 0 && (
+              <tfoot className="bg-surface-50/80 border-t-2 border-surface-200 font-bold text-surface-900">
+                <tr>
+                  <td className="px-6 py-3" colSpan={5}>إجمالي هذه الصفحة ({visibleOrders.length} طلب)</td>
+                  <td className="px-6 py-3 tabular-nums">{money(pageTotal)}</td>
+                  <td className="px-6 py-3" colSpan={2} />
+                </tr>
+                {totals && (
+                  <tr className="border-t border-surface-200">
+                    <td className="px-6 py-3" colSpan={5}>
+                      إجمالي كل النتائج ({totals.order_count.toLocaleString('en-US')} طلب · {totals.units.toLocaleString('en-US')} قطعة)
+                      <span className="font-medium text-surface-500 text-xs block mt-0.5">
+                        قبل الخصم {money(totals.subtotal)} · الخصم −{money(totals.discount)} · التوصيل {money(totals.delivery_fee)}
+                      </span>
+                    </td>
+                    <td className="px-6 py-3 tabular-nums text-lg font-black">{money(totals.total)}</td>
+                    <td className="px-6 py-3" colSpan={2} />
+                  </tr>
+                )}
+              </tfoot>
+            )}
           </table>
         </div>
 
@@ -333,7 +478,7 @@ export const Orders: React.FC<PagedProps> = ({ page, onPage }) => {
             </div>
             <h3 className="text-lg font-bold text-surface-900 mb-1">لا توجد طلبات</h3>
             <p className="text-surface-500">
-              {searchTerm || activeFilter !== 'all' ? 'لم يطابق أي طلب معايير البحث.' : 'أنشئ أول طلب لهذا المتجر.'}
+              {isFiltered(active) ? 'لم يطابق أي طلب معايير البحث.' : 'أنشئ أول طلب لهذا المتجر.'}
             </p>
           </div>
         )}
@@ -344,18 +489,19 @@ export const Orders: React.FC<PagedProps> = ({ page, onPage }) => {
       <OrderDetails
         order={visibleOrders.find(o => o.id === detailsId) ?? null}
         salesReps={salesReps}
+        zones={zones}
         onClose={() => setDetailsId(null)}
       />
 
       <OrderForm
-        open={creating}
+        open={creating || editing !== null}
+        order={editing}
         storeId={activeStoreId ?? ''}
         products={storeProducts}
         customers={pickerCustomers}
-        orders={visibleOrders}
         zones={zones}
         salesReps={salesReps}
-        onClose={() => setCreating(false)}
+        onClose={() => { setCreating(false); setEditing(null); }}
       />
 
       <Confirm

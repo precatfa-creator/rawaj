@@ -38,6 +38,10 @@ export interface Product {
 
 export interface Customer {
   id: string;
+  /** Customers belong to one store; the same person in two stores is two rows. */
+  storeId: string;
+  /** Issued by the customer naming series. Empty on rows created before it. */
+  code: string;
   name: string;
   phone: string;
   whatsapp: string;
@@ -56,6 +60,8 @@ export interface OrderItem {
   quantity: number;
   price: number;
   image: string;
+  /** Chosen from the product's `sizes` when it has any. Empty when it does not. */
+  size?: string;
 }
 
 export interface Order {
@@ -74,6 +80,35 @@ export interface Order {
   createdAt: string;
   deliveryDate?: string;
   agentId?: string;
+  /** Delivery zone the order was composed against; drives the rep's commission. */
+  zoneId?: string;
+  /** The naming series the order number came from, e.g. `ORD-.YYYY.-.####`. */
+  namingSeries?: string;
+}
+
+/**
+ * How one kind of document is numbered — the Frappe model: a doctype offers a
+ * list of series and defaults to one of them.
+ *
+ * A series is a pattern: `ORD-.YYYY.-.####` yields ORD-2026-0001. `.YYYY.`
+ * `.YY.` `.MM.` `.DD.` are replaced when the document is created, and the run of
+ * `#` is the counter, its length the zero-padding.
+ */
+export interface DocumentNaming {
+  /** The table the documents live in: 'orders', 'customers', … */
+  doctype: string;
+  label: string;
+  series: string[];
+  defaultSeries: string;
+  /** true counts per store, so every store's first document is number 1. */
+  perStore: boolean;
+}
+
+export interface NamingCounter {
+  prefix: string;
+  /** Store id, or '' for a doctype counted globally. */
+  storeKey: string;
+  current: number;
 }
 
 /** Why stock moved. 'sale' and 'initial' are written by the system, not chosen. */
@@ -95,6 +130,12 @@ export interface StockEntry {
 
 export type ZoneRegion = 'tripolitania' | 'cyrenaica' | 'fezzan';
 
+/**
+ * How a rep is paid for delivering into a zone. 'none' means the zone says
+ * nothing and the rep's own flat commission applies.
+ */
+export type CommissionType = 'none' | 'fixed' | 'percent';
+
 export interface DeliveryZone {
   id: string;
   /** Sequential, operator-facing zone number: '00', '01', … Assigned by Postgres. */
@@ -106,6 +147,16 @@ export interface DeliveryZone {
   fee: number;
   deliveryTimeDays: number;
   active: boolean;
+  commissionType: CommissionType;
+  /** A percentage of the delivery fee, or a flat amount — read per `commissionType`. */
+  commissionValue: number;
+  /**
+   * Null for the shared default catalogue every store starts from. Set once a
+   * store edits a zone: that store then works with its own copy, and `sourceId`
+   * points at the default the copy replaced.
+   */
+  storeId?: string | null;
+  sourceId?: string | null;
 }
 
 export interface Expense {
@@ -119,12 +170,15 @@ export interface Expense {
 
 export interface SalesRep {
   id: string;
+  storeId: string;
+  /** Issued by the rep naming series. Empty on rows created before it. */
+  code: string;
   name: string;
   phone: string;
   whatsapp: string;
-  /** Delivery zone name covered, matching DeliveryZone.name. Empty = all zones. */
-  zone: string;
-  /** Flat amount earned per delivered order. */
+  /** Delivery zone names covered, matching DeliveryZone.name. Empty = all zones. */
+  zones: string[];
+  /** Flat amount per delivered order, used where the zone sets no commission. */
   commission: number;
   active: boolean;
   note: string;

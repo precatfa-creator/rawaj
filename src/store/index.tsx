@@ -1,7 +1,8 @@
 import React, { createContext, useContext, useEffect, useState, ReactNode } from 'react';
 import { AlertCircle, RefreshCw } from 'lucide-react';
-import { Store, Product, Customer, DeliveryZone, SalesRep } from '../types';
+import { Store, Product, Customer, DeliveryZone, DocumentNaming, SalesRep } from '../types';
 import { supabase } from '../db/supabase';
+import { byCode, zoneFromRow } from '../lib/zones';
 
 /**
  * Only the small, bounded tables live here now.
@@ -11,19 +12,26 @@ import { supabase } from '../db/supabase';
  * count it. `pickerProducts` / `pickerCustomers` are the exception: the order
  * composer needs selectable lists, so it gets a capped slice rather than the
  * full table.
+ *
+ * Almost everything here is scoped to the open store: customers, sales reps,
+ * categories and zones all belong to one store now, so they reload when the
+ * store changes rather than showing another store's records.
  */
 export const PICKER_LIMIT = 200;
 
 interface AppState {
   stores: Store[];
+  /** The open store's effective zones: its own, plus the shared defaults. */
   zones: DeliveryZone[];
-  /** Category names, for the item picker. Small and bounded, so it lives here. */
+  /** Category names for this store's item picker. */
   categories: string[];
   salesReps: SalesRep[];
   pickerProducts: Product[];
   pickerCustomers: Customer[];
   /** True when a picker list was truncated at PICKER_LIMIT. */
   pickersTruncated: boolean;
+  /** How each doctype is numbered. Global, not per store. */
+  documentNaming: DocumentNaming[];
   activeStoreId: string | null;
   setActiveStore: (id: string | null) => void;
   loading: boolean;
@@ -34,10 +42,9 @@ interface AppState {
 const AppContext = createContext<AppState | undefined>(undefined);
 
 const storeColumns = 'id,name,image,facebookPage:facebook_page,productCount:product_count,customerCount:customer_count,orderCount:order_count,totalProfit:total_profit,lastActivity:last_activity';
-const zoneColumns = 'id,code,name,region,capital,areaKm2:area_km2,fee,deliveryTimeDays:delivery_time_days,active';
 const productColumns = 'id,storeId:store_id,name,description,images,purchasePrice:purchase_price,sellingPrice:selling_price,margin,sku,barcode,brand,provider,category,defaultSerial:default_serial,colors,sizes,stock,minStock:min_stock,status,addedAt:added_at,salesCount:sales_count';
-const salesRepColumns = 'id,name,phone,whatsapp,zone,commission,active,note,createdAt:created_at';
-const customerColumns = 'id,name,phone,whatsapp,city,address,orderCount:order_count,totalSpent:total_spent,lastPurchase:last_purchase,rating,status';
+const salesRepColumns = 'id,storeId:store_id,code,name,phone,whatsapp,zones,commission,active,note,createdAt:created_at';
+const customerColumns = 'id,storeId:store_id,code,name,phone,whatsapp,city,address,orderCount:order_count,totalSpent:total_spent,lastPurchase:last_purchase,rating,status';
 
 const resourceLabels: Record<string, string> = {
   stores: 'المتاجر',
@@ -46,6 +53,7 @@ const resourceLabels: Record<string, string> = {
   delivery_zones: 'مناطق التوصيل',
   categories: 'الفئات',
   sales_reps: 'المندوبين',
+  document_naming: 'تسمية المستندات',
 };
 
 export const AppProvider = ({ children }: { children: ReactNode }) => {
@@ -56,6 +64,7 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
   const [pickerProducts, setPickerProducts] = useState<Product[]>([]);
   const [pickerCustomers, setPickerCustomers] = useState<Customer[]>([]);
   const [pickersTruncated, setPickersTruncated] = useState(false);
+  const [documentNaming, setDocumentNaming] = useState<DocumentNaming[]>([]);
   const [activeStoreId, setActiveStoreId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [failedResources, setFailedResources] = useState<string[]>([]);
@@ -79,31 +88,52 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
       if (active) setStores((data ?? []) as unknown as Store[]);
     };
 
+    /**
+     * Through the RPC, not the table: a store's effective list is its own zones
+     * plus the shared defaults it has not replaced, and that rule lives in
+     * Postgres so every reader gets the same answer.
+     */
     const loadZones = async () => {
-      const { data, error } = await supabase.from('delivery_zones').select(zoneColumns).order('code');
+      const { data, error } = await supabase.rpc('store_zones', { p_store_id: activeStoreId });
       if (error) return reportError('delivery_zones', error);
       reportSuccess('delivery_zones');
-      if (active) setZones((data ?? []) as unknown as DeliveryZone[]);
+      if (active) setZones((data ?? []).map(zoneFromRow).sort(byCode));
     };
 
     const loadCategories = async () => {
-      const { data, error } = await supabase.from('categories').select('name').order('name');
+      let request = supabase.from('categories').select('name').order('name');
+      if (activeStoreId) request = request.eq('store_id', activeStoreId);
+      const { data, error } = await request;
       if (error) return reportError('categories', error);
       reportSuccess('categories');
       if (active) setCategories((data ?? []).map(row => row.name as string));
     };
 
     const loadSalesReps = async () => {
-      const { data, error } = await supabase.from('sales_reps').select(salesRepColumns).order('name');
+      let request = supabase.from('sales_reps').select(salesRepColumns).order('name');
+      if (activeStoreId) request = request.eq('store_id', activeStoreId);
+      const { data, error } = await request;
       if (error) return reportError('sales_reps', error);
       reportSuccess('sales_reps');
       if (active) setSalesReps((data ?? []) as unknown as SalesRep[]);
     };
 
+    const loadDocumentNaming = async () => {
+      const { data, error } = await supabase
+        .from('document_naming')
+        .select('doctype,label,series,defaultSeries:default_series,perStore:per_store')
+        .order('label');
+      if (error) return reportError('document_naming', error);
+      reportSuccess('document_naming');
+      if (active) setDocumentNaming((data ?? []) as unknown as DocumentNaming[]);
+    };
+
     const loadPickers = async () => {
+      const productQuery = supabase.from('products').select(productColumns).order('name').limit(PICKER_LIMIT);
+      const customerQuery = supabase.from('customers').select(customerColumns).order('name').limit(PICKER_LIMIT);
       const [products, customers] = await Promise.all([
-        supabase.from('products').select(productColumns).order('name').limit(PICKER_LIMIT),
-        supabase.from('customers').select(customerColumns).order('name').limit(PICKER_LIMIT),
+        activeStoreId ? productQuery.eq('store_id', activeStoreId) : productQuery,
+        activeStoreId ? customerQuery.eq('store_id', activeStoreId) : customerQuery,
       ]);
       if (products.error) reportError('products', products.error); else reportSuccess('products');
       if (customers.error) reportError('customers', customers.error); else reportSuccess('customers');
@@ -117,7 +147,9 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
 
     const loadAll = async () => {
       setLoading(true);
-      await Promise.all([loadStores(), loadZones(), loadCategories(), loadSalesReps(), loadPickers()]);
+      await Promise.all([
+        loadStores(), loadZones(), loadCategories(), loadSalesReps(), loadDocumentNaming(), loadPickers(),
+      ]);
       if (active) setLoading(false);
     };
 
@@ -129,6 +161,7 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
       .on('postgres_changes', { event: '*', schema: 'public', table: 'delivery_zones' }, () => void loadZones())
       .on('postgres_changes', { event: '*', schema: 'public', table: 'categories' }, () => void loadCategories())
       .on('postgres_changes', { event: '*', schema: 'public', table: 'sales_reps' }, () => void loadSalesReps())
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'document_naming' }, () => void loadDocumentNaming())
       .on('postgres_changes', { event: '*', schema: 'public', table: 'products' }, () => void loadPickers())
       .on('postgres_changes', { event: '*', schema: 'public', table: 'customers' }, () => void loadPickers())
       .subscribe();
@@ -137,14 +170,16 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
       active = false;
       void supabase.removeChannel(channel);
     };
-  }, [reloadToken]);
+    // Everything but `stores` and the naming config is scoped to the open store,
+    // so switching store reloads them rather than showing the previous store's.
+  }, [reloadToken, activeStoreId]);
 
   const reload = () => setReloadToken(token => token + 1);
 
   return (
     <AppContext.Provider value={{
       stores, zones, categories, salesReps, pickerProducts, pickerCustomers, pickersTruncated,
-      activeStoreId, setActiveStore: setActiveStoreId, loading, failedResources, reload,
+      documentNaming, activeStoreId, setActiveStore: setActiveStoreId, loading, failedResources, reload,
     }}>
       {loading ? (
         <div className="min-h-screen flex items-center justify-center bg-surface-50">

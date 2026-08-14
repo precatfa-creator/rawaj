@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { motion } from 'motion/react';
-import { ArrowRight, BarChart3, Info, LogOut, Settings, ShieldCheck, Store as StoreIcon } from 'lucide-react';
+import { ArrowRight, BarChart3, Hash, Info, LogOut, Settings, ShieldCheck, Store as StoreIcon } from 'lucide-react';
 import { useAppStore } from '../store';
 import { supabase } from '../db/supabase';
 import { AboutModal } from '../components/AboutModal';
@@ -23,9 +23,10 @@ interface PortalProps {
   onTabChange: (tab: PortalTab) => void;
   showUsers: boolean;
   onShowUsers: (show: boolean) => void;
-  /** Rendered in place of the tabs when the audit route is active. */
-  auditPanel?: React.ReactNode;
+  /** Rendered in place of the tabs by the admin-only routes (audit, naming). */
+  panel?: React.ReactNode;
   onShowAudit: () => void;
+  onShowNaming: () => void;
   onOpenStore: (storeId: string) => void;
 }
 
@@ -34,7 +35,9 @@ interface PortalProps {
  * portfolio-wide numbers, and the list of stores. Everything else lives one
  * level down, inside a store.
  */
-export const Portal: React.FC<PortalProps> = ({ profile, tab, onTabChange, showUsers, onShowUsers, auditPanel, onShowAudit, onOpenStore }) => {
+export const Portal: React.FC<PortalProps> = ({
+  profile, tab, onTabChange, showUsers, onShowUsers, panel, onShowAudit, onShowNaming, onOpenStore,
+}) => {
   const { stores } = useAppStore();
   const [showAbout, setShowAbout] = useState(false);
 
@@ -88,6 +91,17 @@ export const Portal: React.FC<PortalProps> = ({ profile, tab, onTabChange, showU
             {profile.role === 'admin' && (
               <button
                 type="button"
+                onClick={onShowNaming}
+                className={iconButton}
+                aria-label="تسمية المستندات"
+                title="تسمية المستندات"
+              >
+                <Hash size={20} />
+              </button>
+            )}
+            {profile.role === 'admin' && (
+              <button
+                type="button"
                 onClick={() => onShowUsers(true)}
                 className={iconButton}
                 aria-label="إدارة المستخدمين"
@@ -114,7 +128,7 @@ export const Portal: React.FC<PortalProps> = ({ profile, tab, onTabChange, showU
           </div>
         </header>
 
-        {auditPanel ? (
+        {panel ? (
           <section className="mt-8">
             <button
               type="button"
@@ -124,7 +138,7 @@ export const Portal: React.FC<PortalProps> = ({ profile, tab, onTabChange, showU
               <ArrowRight size={18} />
               رجوع إلى البوابة
             </button>
-            {auditPanel}
+            {panel}
           </section>
         ) : showUsers ? (
           <section className="mt-8">
