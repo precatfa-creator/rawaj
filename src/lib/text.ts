@@ -7,6 +7,16 @@
  * path can forget it. Arrays are mapped element-wise (images/colors/sizes);
  * numbers, booleans and nulls pass through untouched.
  */
+/**
+ * A list a person typed into one field: sizes, or the zones a rep covers.
+ *
+ * Both Arabic and Latin separators are accepted because an Arabic keyboard
+ * produces "،" and "؛" where the same person's English keyboard produces "," and
+ * ";" — treating one of them as ordinary text would make "S، M" a single size.
+ */
+export const splitList = (value: string): string[] =>
+  value.split(/[,،;؛\n]/).map(part => part.trim()).filter(Boolean);
+
 export const trimRow = <T extends Record<string, unknown>>(row: T): T => {
   const out: Record<string, unknown> = {};
   Object.entries(row).forEach(([key, value]) => {

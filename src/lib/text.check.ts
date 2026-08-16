@@ -1,6 +1,6 @@
 // Run with: npx tsx src/lib/text.check.ts
 import assert from 'node:assert/strict';
-import { trimRow } from './text';
+import { splitList, trimRow } from './text';
 
 // The point of the helper: two spellings of one city stop being two cities.
 assert.deepEqual(trimRow({ city: '  طرابلس  ' }), { city: 'طرابلس' });
@@ -23,5 +23,14 @@ assert.deepEqual(
 
 // Keys are preserved exactly, including ones whose value is undefined.
 assert.deepEqual(Object.keys(trimRow({ a: ' x ', b: undefined })), ['a', 'b']);
+
+// A list typed into one field: sizes on an item, zones a rep covers. Both
+// keyboards' separators count, or "S، M" would be one size named "S، M".
+assert.deepEqual(splitList('S, M ,L'), ['S', 'M', 'L']);
+assert.deepEqual(splitList('صغير، وسط؛ كبير'), ['صغير', 'وسط', 'كبير']);
+
+// Empty entries from a trailing separator are not sizes.
+assert.deepEqual(splitList('S,,M,'), ['S', 'M']);
+assert.deepEqual(splitList('   '), []);
 
 console.log('text.ts: all checks passed');

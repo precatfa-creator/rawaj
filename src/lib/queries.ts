@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useState } from 'react';
 import { supabase } from '../db/supabase';
 import { normalizeArabic } from './arabic';
+// Type-only in the other direction, so the two files do not form a runtime cycle.
+import { orderTotalsArgs, type OrderFilters } from './orderFilters';
 
 export const PAGE_SIZE = 24;
 
@@ -12,12 +14,28 @@ export interface Page<T> {
   reload: () => void;
 }
 
+/** Comparisons a list filter can make beyond equality: date and amount ranges. */
+export interface RangeFilter {
+  column: string;
+  op: 'gte' | 'lte';
+  value: string;
+}
+
 export interface PagedQuery {
-  table: 'products' | 'customers' | 'orders' | 'audit_log';
+  table: 'products' | 'customers' | 'orders' | 'audit_log' | 'stock_entries';
   columns: string;
   /** Equality filters; undefined values are skipped. */
   match?: Record<string, string | undefined>;
-  /** Matched against the table's generated `search_text` column. */
+  /** IN filters used for records shared by stores in one business group. */
+  matchIn?: Record<string, string[]>;
+  /** Column that must be null — how the portal asks for rows no store owns. */
+  isNull?: string;
+  /** Range comparisons; empty values are skipped. */
+  filters?: RangeFilter[];
+  /**
+   * Matched against the table's generated `search_text` column. Only for tables
+   * that have one — products, customers and orders.
+   */
   search?: string;
   orderBy: string;
   ascending?: boolean;
@@ -33,8 +51,12 @@ export interface PagedQuery {
  * number that only describes the current 24 rows.
  */
 export const usePagedList = <T,>(query: PagedQuery): Page<T> => {
-  const { table, columns, match, search, orderBy, ascending = false, page, pageSize = PAGE_SIZE } = query;
+  const { table, columns, match, matchIn, isNull, filters, search, orderBy, ascending = false, page, pageSize = PAGE_SIZE } = query;
   const matchKey = JSON.stringify(match ?? {});
+  const matchInKey = JSON.stringify(matchIn ?? {});
+  // Serialised for the same reason `match` is: an array literal rebuilt on every
+  // render would restart the effect on every keystroke.
+  const filtersKey = JSON.stringify(filters ?? []);
 
   const [rows, setRows] = useState<T[]>([]);
   const [total, setTotal] = useState(0);
@@ -53,6 +75,15 @@ export const usePagedList = <T,>(query: PagedQuery): Page<T> => {
 
       Object.entries(JSON.parse(matchKey) as Record<string, string | undefined>).forEach(([column, value]) => {
         if (value !== undefined && value !== null && value !== '') request = request.eq(column, value);
+      });
+      Object.entries(JSON.parse(matchInKey) as Record<string, string[]>).forEach(([column, values]) => {
+        if (values.length > 0) request = request.in(column, values);
+      });
+
+      if (isNull) request = request.is(isNull, null);
+
+      (JSON.parse(filtersKey) as RangeFilter[]).forEach(({ column, op, value }) => {
+        if (value !== '') request = op === 'gte' ? request.gte(column, value) : request.lte(column, value);
       });
 
       const term = normalizeArabic(search ?? '');
@@ -77,7 +108,7 @@ export const usePagedList = <T,>(query: PagedQuery): Page<T> => {
 
     void run();
     return () => { active = false; };
-  }, [table, columns, matchKey, search, orderBy, ascending, page, pageSize, token]);
+  }, [table, columns, matchKey, matchInKey, isNull, filtersKey, search, orderBy, ascending, page, pageSize, token]);
 
   // Realtime keeps the *current page* fresh rather than patching rows into local
   // state, which would reintroduce optimistic-update drift.
@@ -191,6 +222,24 @@ export const useSalesRepTotals = (storeId: string | null): Map<string, SalesRepT
   return new Map(rows.map(row => [row.rep_id, row]));
 };
 
+export interface OrderTotalsRow {
+  order_count: number; units: number; subtotal: number;
+  discount: number; delivery_fee: number; total: number;
+}
+
+/**
+ * Totals for every order the current filters match — not for the page on
+ * screen. Same filter object the list query consumes, turned into arguments by
+ * `orderTotalsArgs`, so the two cannot drift apart.
+ */
+export const useOrderTotals = (filters: OrderFilters): OrderTotalsRow | null => {
+  const args = orderTotalsArgs(filters);
+  return useAggregate<OrderTotalsRow | null>(
+    async () => (await rpc<OrderTotalsRow>('orders_totals', args))[0] ?? null,
+    null, [args], ['orders'],
+  );
+};
+
 export const useStoreTotals = (): Map<string, StoreTotalRow> => {
   const rows = useAggregate<StoreTotalRow[]>(
     () => rpc<StoreTotalRow>('store_totals', {}),
@@ -209,10 +258,14 @@ export const searchOptions = async (
   term: string,
   match: Record<string, string | undefined> = {},
   limit = 30,
+  matchIn: Record<string, string[]> = {},
 ): Promise<Record<string, unknown>[]> => {
   let request = supabase.from(table).select(columns);
   Object.entries(match).forEach(([column, value]) => {
     if (value) request = request.eq(column, value);
+  });
+  Object.entries(matchIn).forEach(([column, values]) => {
+    if (values.length > 0) request = request.in(column, values);
   });
   const normalized = normalizeArabic(term);
   if (normalized) request = request.ilike('search_text', `%${normalized}%`);

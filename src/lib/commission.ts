@@ -1,0 +1,34 @@
+import type { DeliveryZone, SalesRep } from '../types';
+
+/**
+ * What one delivered order pays its rep.
+ *
+ * The cut comes out of the delivery fee the order actually charged, not out of
+ * the goods: a zone either takes a percentage of that fee, pays a flat amount
+ * per order, or says nothing — in which case the rep's own flat commission
+ * applies. An order with no zone is the same "says nothing" case.
+ *
+ * Mirrors public.order_commission in
+ * 20260814100000_order_edit_zone_commission.sql; commission.check.ts asserts
+ * the two agree on the same fixtures.
+ */
+export const orderCommission = (
+  deliveryFee: number,
+  zone: Pick<DeliveryZone, 'commissionType' | 'commissionValue'> | undefined,
+  repCommission: number,
+): number => {
+  if (zone?.commissionType === 'percent') return (deliveryFee || 0) * (zone.commissionValue || 0) / 100;
+  if (zone?.commissionType === 'fixed') return zone.commissionValue || 0;
+  return repCommission || 0;
+};
+
+/** Human-readable rule for a zone, for the zones page and the rep cards. */
+export const describeCommission = (zone: Pick<DeliveryZone, 'commissionType' | 'commissionValue'>): string => {
+  if (zone.commissionType === 'percent') return `${zone.commissionValue}% من رسوم التوصيل`;
+  if (zone.commissionType === 'fixed') return `${Math.round(zone.commissionValue).toLocaleString('en-US')} د.ل لكل طلب`;
+  return 'عمولة المندوب الثابتة';
+};
+
+/** Empty list means the rep covers every zone. */
+export const repCoversZone = (rep: Pick<SalesRep, 'zones'>, zoneName: string): boolean =>
+  rep.zones.length === 0 || !zoneName || rep.zones.includes(zoneName);

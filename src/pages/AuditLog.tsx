@@ -24,9 +24,16 @@ const TABLE_LABELS: Record<string, string> = {
   products: 'المنتجات',
   customers: 'العملاء',
   orders: 'الطلبات',
+  stock_entries: 'حركات المخزون',
+  sales_reps: 'المندوبين',
+  categories: 'التصنيفات',
   delivery_zones: 'مناطق التوصيل',
+  document_naming: 'تسمية المستندات',
   profiles: 'المستخدمون',
 };
+
+/** Tables that never belong to a store, so a store's filter must not offer them. */
+const GLOBAL_TABLES = ['profiles'];
 
 const ACTION_LABELS: Record<AuditRow['action'], string> = {
   INSERT: 'إضافة',
@@ -46,7 +53,16 @@ const short = (value: unknown): string => {
   return text.length > 60 ? `${text.slice(0, 60)}…` : text;
 };
 
-export const AuditLog: React.FC<PagedProps> = ({ page, onPage }) => {
+interface AuditLogProps extends PagedProps {
+  /**
+   * The store whose trail this is. `null` is the portal's view: the changes no
+   * store owns — user accounts, and records deleted since they were edited. The
+   * two views are disjoint, so nothing is listed twice and nothing is hidden.
+   */
+  storeId: string | null;
+}
+
+export const AuditLog: React.FC<AuditLogProps> = ({ page, onPage, storeId }) => {
   const [table, setTable] = useState('');
   const [action, setAction] = useState('');
   const [expanded, setExpanded] = useState<number | null>(null);
@@ -55,10 +71,14 @@ export const AuditLog: React.FC<PagedProps> = ({ page, onPage }) => {
   const list = usePagedList<AuditRow>({
     table: 'audit_log',
     columns: 'id,tableName:table_name,recordId:record_id,action,actorId:actor_id,actorRole:actor_role,txid,changedAt:changed_at,changedFields:changed_fields,data',
-    match: { table_name: table || undefined, action: action || undefined },
+    match: { store_id: storeId ?? undefined, table_name: table || undefined, action: action || undefined },
+    isNull: storeId ? undefined : 'store_id',
     orderBy: 'changed_at',
     page,
   });
+
+  const tableOptions = Object.entries(TABLE_LABELS)
+    .filter(([value]) => (storeId ? !GLOBAL_TABLES.includes(value) : true));
 
   // Names are resolved at read time; the log stores only the uid, so a deleted
   // profile still leaves a readable trail.
@@ -71,13 +91,21 @@ export const AuditLog: React.FC<PagedProps> = ({ page, onPage }) => {
   const describeActor = (row: AuditRow) => {
     if (row.actorId) return actors.get(row.actorId) ?? 'مستخدم محذوف';
     if (row.actorRole === 'service_role') return 'خدمة النظام';
-    if (row.actorRole === 'postgres') return 'وصول مباشر لقاعدة البيانات';
+    // `postgres` is the role a migration runs under: `supabase db push` carries
+    // no signed-in user, so these rows are the schema updating itself rather
+    // than anybody working in the app.
+    if (row.actorRole === 'postgres') return 'ترحيل قاعدة البيانات';
     return row.actorRole || 'غير معروف';
   };
 
   return (
     <div className="space-y-6">
-      <PageHead title="سجل التدقيق" subtitle="كل إضافة وتعديل وحذف في قاعدة البيانات، مسجّلة تلقائياً.">
+      <PageHead
+        title={storeId ? 'سجل التدقيق' : 'سجل النظام'}
+        subtitle={storeId
+          ? 'كل إضافة وتعديل وحذف في هذا المتجر، مسجّلة تلقائياً ومنسوبة لمن قام بها.'
+          : 'التغييرات التي لا تخص متجراً بعينه: حسابات المستخدمين، وسجلات حُذفت بعد تعديلها.'}
+      >
         <Pill tone="bg-primary-50 text-primary-800 border-primary-200">
           <ShieldCheck size={14} />
           للقراءة فقط
@@ -98,7 +126,7 @@ export const AuditLog: React.FC<PagedProps> = ({ page, onPage }) => {
           value={table}
           onChange={value => { setTable(value); onPage(0); }}
           options={[{ value: '', label: 'كل الجداول' },
-            ...Object.entries(TABLE_LABELS).map(([value, label]) => ({ value, label }))]}
+            ...tableOptions.map(([value, label]) => ({ value, label }))]}
           className="md:w-56"
         />
         <Combobox
