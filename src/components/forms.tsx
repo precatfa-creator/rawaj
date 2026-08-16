@@ -6,7 +6,8 @@ import { ImageUploader } from './ImageUploader';
 import { useAppStore } from '../store';
 import { splitList } from '../lib/text';
 import {
-  createCategory, newId, saveCustomer, saveProduct, saveSalesRep, saveStore, saveZone,
+  createCategory, createCity, createMunicipality, createZoneScope,
+  newId, saveCustomer, saveProduct, saveSalesRep, saveStore, saveZone,
   type CustomerDraft, type ProductDraft, type SalesRepDraft, type WriteResult, type ZoneDraft,
 } from '../lib/mutations';
 import type { Customer, DeliveryZone, Product, SalesRep, Store, ZoneRegion } from '../types';
@@ -115,12 +116,14 @@ export const ZoneForm: React.FC<{
   initialName?: string;
 }> = ({ open, zone, onClose, onCreated, initialName = '' }) => {
   const isNew = !zone;
-  const { activeStoreId } = useAppStore();
+  const { activeStoreId, cities, zoneScopes, municipalities } = useAppStore();
   // A default belongs to every store, so editing it here produces this store's
   // own copy. Worth saying out loud on the form rather than surprising someone.
   const isSharedDefault = !isNew && !zone?.storeId;
   const [draft, setDraft] = useState<ZoneDraft>({
-    id: '', code: '', name: '', region: 'tripolitania', capital: '', fee: 0, deliveryTimeDays: 3,
+    id: '', code: '', name: '', region: 'tripolitania',
+    cityId: null, scopeId: null, municipalityId: null,
+    altName: '', fee: 0, deliveryTimeDays: 3,
     active: true, commissionType: 'none', commissionValue: 0,
   });
   const [busy, setBusy] = useState(false);
@@ -136,7 +139,10 @@ export const ZoneForm: React.FC<{
       code: zone?.code ?? '',
       name: zone?.name ?? initialName,
       region: zone?.region ?? 'tripolitania',
-      capital: zone?.capital ?? '',
+      cityId: zone?.cityId ?? null,
+      scopeId: zone?.scopeId ?? null,
+      municipalityId: zone?.municipalityId ?? null,
+      altName: zone?.altName ?? '',
       fee: zone?.fee ?? 0,
       deliveryTimeDays: zone?.deliveryTimeDays ?? 3,
       active: zone?.active ?? true,
@@ -149,6 +155,10 @@ export const ZoneForm: React.FC<{
 
   const set = <K extends keyof ZoneDraft>(field: K, value: ZoneDraft[K]) =>
     setDraft(current => ({ ...current, [field]: value }));
+
+  // Only the chosen city's scopes: «غرب طرابلس» offered while editing a
+  // Benghazi area is an invitation to file it wrong.
+  const scopesOfCity = zoneScopes.filter(scope => scope.cityId === draft.cityId);
 
   return (
     <Modal
@@ -204,8 +214,47 @@ export const ZoneForm: React.FC<{
           onChange={value => set('region', value as ZoneRegion)}
           options={Object.entries(REGIONS).map(([value, { label }]) => ({ value, label }))}
         />
-        <Field label="المدينة الرئيسية">
-          <input value={draft.capital} onChange={e => set('capital', e.target.value)} className={fieldClass} />
+        {/* The three levels are records, not typed strings: a city entered with
+            a trailing space used to become a second city in every filter and a
+            second branch in the tree. Anything genuinely missing can still be
+            added from the picker, so the link never blocks the work. */}
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+          <Combobox
+            showLabel
+            label="المدينة الكبرى"
+            value={draft.cityId ?? ''}
+            // Changing the city drops the scope: a scope belongs to one city,
+            // and keeping it would file the area under a scope of another city.
+            onChange={value => setDraft(current => ({ ...current, cityId: value || null, scopeId: null }))}
+            options={cities.map(city => ({ value: city.id, label: city.name, hint: REGIONS[city.region]?.label }))}
+            onCreate={async term => (await createCity(term)) ?? ''}
+            createLabel={term => `إضافة مدينة "${term}"`}
+          />
+          <Combobox
+            showLabel
+            label="النطاق الجغرافي"
+            value={draft.scopeId ?? ''}
+            onChange={value => set('scopeId', value || null)}
+            disabled={!draft.cityId}
+            placeholder={draft.cityId ? 'اختر…' : 'اختر المدينة أولاً'}
+            options={scopesOfCity.map(scope => ({ value: scope.id, label: scope.name }))}
+            onCreate={draft.cityId
+              ? async term => (await createZoneScope(term, draft.cityId as string)) ?? ''
+              : undefined}
+            createLabel={term => `إضافة نطاق "${term}"`}
+          />
+          <Combobox
+            showLabel
+            label="البلدية"
+            value={draft.municipalityId ?? ''}
+            onChange={value => set('municipalityId', value || null)}
+            options={municipalities.map(item => ({ value: item.id, label: item.name }))}
+            onCreate={async term => (await createMunicipality(term)) ?? ''}
+            createLabel={term => `إضافة بلدية "${term}"`}
+          />
+        </div>
+        <Field label="الاسم البديل" hint="اسم إنجليزي أو اسم قديم يساعد في البحث.">
+          <input value={draft.altName} onChange={e => set('altName', e.target.value)} dir="auto" className={fieldClass} />
         </Field>
         <div className="grid grid-cols-2 gap-4">
           <Field label="رسوم التوصيل (د.ل)">
@@ -269,6 +318,7 @@ export const StoreForm: React.FC<{
   const [name, setName] = useState('');
   const [image, setImage] = useState('');
   const [facebookPage, setFacebookPage] = useState('');
+  const [mobileNumber, setMobileNumber] = useState('');
   const { busy, error, submit } = useSubmit(onClose);
 
   // Re-seed the fields whenever a different record is opened.
@@ -279,6 +329,7 @@ export const StoreForm: React.FC<{
     setName(store?.name ?? '');
     setImage(store?.image ?? '');
     setFacebookPage(store?.facebookPage ?? '');
+    setMobileNumber(store?.mobileNumber ?? '');
   }
   if (!open && seeded !== null) setSeeded(null);
 
@@ -292,10 +343,13 @@ export const StoreForm: React.FC<{
       <form
         id="entity-form"
         className="space-y-4"
-        onSubmit={submit(() => saveStore({ id: store?.id ?? newId(), name, image, facebookPage }, isNew))}
+        onSubmit={submit(() => saveStore({ id: store?.id ?? newId(), name, image, facebookPage, mobileNumber }, isNew))}
       >
         <Field label="اسم المتجر">
           <input value={name} onChange={e => setName(e.target.value)} required className={fieldClass} />
+        </Field>
+        <Field label="رقم هاتف المتجر" hint="يستخدمه مالك المتجر لتأكيد طلبات ربط المتاجر لاحقاً.">
+          <input value={mobileNumber} onChange={e => setMobileNumber(e.target.value)} dir="ltr" type="tel" className={fieldClass} />
         </Field>
         {/* One image, so the gallery uploader is capped at 1 rather than duplicated. */}
         <ImageUploader
@@ -674,7 +728,7 @@ export const CustomerForm: React.FC<{
     ...zones.map(zone => ({
       value: zone.name,
       label: zone.name,
-      hint: `${zone.code}${zone.capital ? ` · ${zone.capital}` : ''}`,
+      hint: `${zone.code}${zone.city ? ` · ${zone.city}` : ''}`,
     })),
     ...(draft.city && !zones.some(zone => zone.name === draft.city)
       ? [{ value: draft.city, label: draft.city, hint: 'خارج مناطق التوصيل' }]

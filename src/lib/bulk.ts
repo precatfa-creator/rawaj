@@ -1,6 +1,7 @@
 import { supabase } from '../db/supabase';
 import {
-  createOrder, newId, saveProduct, saveZone, setOrderStatus, updateOrder, type WriteResult,
+  createCity, createMunicipality, createOrder, createZoneScope, newId, saveProduct, saveZone,
+  setOrderStatus, updateOrder, type WriteResult, type ZoneDraft,
 } from './mutations';
 import { downloadCsv, downloadXlsx, readSheet, toBoolean, toNumber, type SheetRow } from './sheet';
 import { formatOrderItems, parseOrderItems } from './orderSheet';
@@ -125,6 +126,34 @@ const commissionFromLabel = (value: string, fallback: CommissionType): Commissio
   return match ?? fallback;
 };
 
+/**
+ * Resolves the three hierarchy columns of a sheet row to master records.
+ *
+ * A blank cell keeps whatever the existing row already links to, so a sheet
+ * exported for pricing and re-imported does not unfile every area. A named city
+ * or scope that does not exist yet is created — the point of the Link is to stop
+ * typos multiplying, not to stop an operator entering a real place.
+ */
+const hierarchyOf = async (
+  row: SheetRow,
+  existing: DeliveryZone | undefined,
+): Promise<Pick<ZoneDraft, 'cityId' | 'scopeId' | 'municipalityId'>> => {
+  const cityName = (row['المدينة الكبرى'] ?? '').trim();
+  const scopeName = (row['النطاق الجغرافي'] ?? '').trim();
+  const muniName = (row['البلدية'] ?? '').trim();
+
+  const cityId = cityName ? await createCity(cityName) : existing?.cityId ?? null;
+  return {
+    cityId,
+    // A scope without a city has nothing to hang off, so it is left unset
+    // rather than attached to whichever city happened to be nearby.
+    scopeId: scopeName && cityId
+      ? await createZoneScope(scopeName, cityId)
+      : scopeName ? null : existing?.scopeId ?? null,
+    municipalityId: muniName ? await createMunicipality(muniName) : existing?.municipalityId ?? null,
+  };
+};
+
 const ZONE_ID_HEADER = 'المعرّف الداخلي (لا تعدّله)';
 const ZONE_CODE_HEADER = 'رقم المنطقة';
 
@@ -140,8 +169,14 @@ export const zoneBulk = (storeId: string | null): BulkSpec<DeliveryZone> => ({
     { header: ZONE_ID_HEADER, value: zone => zone.id },
     { header: ZONE_CODE_HEADER, value: zone => zone.code },
     { header: 'اسم المنطقة', value: zone => zone.name },
+    // The three levels around the area. A sheet can be sorted and priced city
+    // by city, and a name typed here is resolved to the master record on import
+    // — creating it when it is genuinely new, so an import is never blocked by
+    // a city nobody has entered yet.
+    { header: 'المدينة الكبرى', value: zone => zone.city },
+    { header: 'النطاق الجغرافي', value: zone => zone.scope },
+    { header: 'البلدية', value: zone => zone.municipality },
     { header: 'الإقليم', value: zone => REGION_LABELS[zone.region] },
-    { header: 'المدينة الرئيسية', value: zone => zone.capital },
     { header: 'رسوم التوصيل', value: zone => String(zone.fee) },
     { header: 'مدة التوصيل (أيام)', value: zone => String(zone.deliveryTimeDays) },
     { header: 'عمولة المندوب', value: zone => COMMISSION_LABELS[zone.commissionType] },
@@ -173,9 +208,9 @@ export const zoneBulk = (storeId: string | null): BulkSpec<DeliveryZone> => ({
       byId.get((row[ZONE_ID_HEADER] ?? '').trim()) ?? byZoneCode.get((row[ZONE_CODE_HEADER] ?? '').trim()));
   },
 
-  save: (row, existing) => {
+  save: async (row, existing) => {
     const name = (row['اسم المنطقة'] ?? '').trim();
-    if (!name) return Promise.resolve({ ok: false, message: 'اسم المنطقة مطلوب.' });
+    if (!name) return { ok: false, message: 'اسم المنطقة مطلوب.' };
 
     return saveZone({
       id: existing?.id ?? newId(),
@@ -183,7 +218,8 @@ export const zoneBulk = (storeId: string | null): BulkSpec<DeliveryZone> => ({
       code: (row[ZONE_CODE_HEADER] ?? '').trim(),
       name,
       region: regionFromLabel(row['الإقليم'] ?? '', existing?.region ?? 'tripolitania'),
-      capital: row['المدينة الرئيسية'] ?? existing?.capital ?? '',
+      ...(await hierarchyOf(row, existing)),
+      altName: existing?.altName ?? '',
       fee: toNumber(row['رسوم التوصيل'] ?? '', existing?.fee ?? 0),
       deliveryTimeDays: Math.max(1, toNumber(row['مدة التوصيل (أيام)'] ?? '', existing?.deliveryTimeDays ?? 3)),
       commissionType: commissionFromLabel(row['عمولة المندوب'] ?? '', existing?.commissionType ?? 'none'),

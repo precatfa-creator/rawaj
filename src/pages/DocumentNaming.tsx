@@ -6,20 +6,25 @@ import { describeSeries } from '../components/forms';
 import { Combobox } from '../components/Combobox';
 import { ErrorNote } from '../components/Confirm';
 import { Card, DataTable, EmptyState, PageHead, Pill, actionButton, count, quietButton } from '../components/ui';
-import type { NamingCounter } from '../types';
+import type { DocumentNaming, NamingCounter } from '../types';
 
 const fieldClass =
   'w-full bg-white border border-surface-200 rounded-xl px-3 py-2 text-sm font-bold focus:outline-none focus:ring-2 focus:ring-primary-500/30 focus:border-primary-500';
 
 /**
- * Document naming settings — where the series a doctype offers are decided.
+ * Document naming settings for one store.
  *
  * Frappe's model, and its division of labour: the series live with the doctype,
  * the counters live apart and can be moved by hand. That second part is not a
  * convenience — a business that issued ORD-2026-0500 on paper before it had
  * this app needs the next one to be 0501, and nothing else can express that.
+ *
+ * `documentNaming` from the store context is already this store's effective
+ * config — its own rows where it has them, the shared defaults everywhere else.
+ * Saving writes the store's own row, so one store's patterns never reach
+ * another's.
  */
-export const DocumentNamingSettings: React.FC = () => {
+export const DocumentNamingSettings: React.FC<{ storeId: string }> = ({ storeId }) => {
   const { documentNaming, stores } = useAppStore();
   const [drafts, setDrafts] = useState<Record<string, { series: string; defaultSeries: string }>>({});
   const [counters, setCounters] = useState<NamingCounter[]>([]);
@@ -30,7 +35,8 @@ export const DocumentNamingSettings: React.FC = () => {
   // Seeded from the loaded config, and re-seeded when it changes underneath —
   // realtime keeps `documentNaming` fresh, and a stale draft would silently
   // overwrite someone else's edit on save.
-  const key = documentNaming.map(item => `${item.doctype}:${item.series.join('|')}:${item.defaultSeries}`).join(';');
+  const key = documentNaming
+    .map(item => `${item.doctype}:${item.storeKey}:${item.series.join('|')}:${item.defaultSeries}`).join(';');
   const [seeded, setSeeded] = useState('');
   if (key !== seeded) {
     setSeeded(key);
@@ -40,37 +46,52 @@ export const DocumentNamingSettings: React.FC = () => {
     ])));
   }
 
+  // This store's counters, plus the shared ones: a doctype counted globally
+  // still decides what this store's next document is called.
   const loadCounters = async () => {
     const { data, error: queryError } = await supabase
       .from('naming_counters')
       .select('prefix,storeKey:store_key,current')
+      .in('store_key', [storeId, ''])
       .order('prefix');
     if (queryError) { console.error('naming counters failed', queryError); return; }
     setCounters((data ?? []) as unknown as NamingCounter[]);
   };
 
-  useEffect(() => { void loadCounters(); }, []);
+  useEffect(() => { void loadCounters(); }, [storeId]);
 
-  const save = async (doctype: string) => {
-    const draft = drafts[doctype];
+  /**
+   * Upsert, not update: the store may still be running on the shared default,
+   * in which case this is the first row it owns. `label` and `per_store` are
+   * carried over from the effective config rather than re-entered — they
+   * describe the doctype, not the store's preference.
+   */
+  const save = async (config: DocumentNaming) => {
+    const draft = drafts[config.doctype];
     // One series per line; blank lines are how a list is typed, not entries.
     const series = [...new Set(draft.series.split('\n').map(line => line.trim()).filter(Boolean))];
     if (series.length === 0) { setError('أضف تسلسلاً واحداً على الأقل.'); return; }
 
     const defaultSeries = series.includes(draft.defaultSeries) ? draft.defaultSeries : series[0];
 
-    setBusy(doctype); setError(''); setNote('');
+    setBusy(config.doctype); setError(''); setNote('');
     const { error: writeError } = await supabase
       .from('document_naming')
-      .update({ series, default_series: defaultSeries })
-      .eq('doctype', doctype);
+      .upsert({
+        doctype: config.doctype,
+        store_key: storeId,
+        label: config.label,
+        per_store: config.perStore,
+        series,
+        default_series: defaultSeries,
+      }, { onConflict: 'doctype,store_key' });
     setBusy('');
     if (writeError) {
       console.error('document naming save failed', writeError);
       setError('تعذر الحفظ. تأكد أن التسلسل الافتراضي ضمن القائمة.');
       return;
     }
-    setNote('تم الحفظ.');
+    setNote('تم الحفظ لهذا المتجر.');
   };
 
   const setCounter = async (counter: NamingCounter, value: string) => {
@@ -100,7 +121,7 @@ export const DocumentNamingSettings: React.FC = () => {
     <div className="space-y-6">
       <PageHead
         title="تسمية المستندات"
-        subtitle="كيف يُرقَّم كل نوع من المستندات، ومن أين يكمل العدّاد."
+        subtitle="كيف يُرقَّم كل نوع من المستندات في هذا المتجر، ومن أين يكمل العدّاد."
       >
         <Pill tone="bg-primary-50 text-primary-800 border-primary-200">
           <Hash size={14} />
@@ -119,6 +140,7 @@ export const DocumentNamingSettings: React.FC = () => {
           مثال: <span dir="ltr" className="font-black">ORD-.YYYY.-.####</span> ينتج
           <span dir="ltr" className="font-black"> ORD-{new Date().getFullYear()}-0001</span>.
           العدّاد لكل متجر على حدة، فيبدأ ترقيم كل متجر من 1.
+          التسلسلات هنا تخص هذا المتجر وحده: حتى تُحفظ، يعمل المتجر بالإعداد الافتراضي المشترك.
         </p>
       </div>
 
@@ -151,11 +173,18 @@ export const DocumentNamingSettings: React.FC = () => {
                     <h3 className="font-black text-lg text-surface-900">{config.label}</h3>
                     <p className="text-xs text-surface-500 mt-0.5" dir="ltr">{config.doctype}</p>
                   </div>
-                  <Pill tone={config.perStore
-                    ? 'bg-primary-50 text-primary-800 border-primary-200'
-                    : 'bg-surface-100 text-surface-600 border-surface-200'}>
-                    {config.perStore ? 'عدّاد لكل متجر' : 'عدّاد مشترك'}
-                  </Pill>
+                  <div className="flex flex-wrap items-center gap-2 justify-end">
+                    <Pill tone={config.storeKey
+                      ? 'bg-emerald-50 text-emerald-800 border-emerald-200'
+                      : 'bg-surface-100 text-surface-600 border-surface-200'}>
+                      {config.storeKey ? 'إعداد هذا المتجر' : 'الإعداد الافتراضي'}
+                    </Pill>
+                    <Pill tone={config.perStore
+                      ? 'bg-primary-50 text-primary-800 border-primary-200'
+                      : 'bg-surface-100 text-surface-600 border-surface-200'}>
+                      {config.perStore ? 'عدّاد لكل متجر' : 'عدّاد مشترك'}
+                    </Pill>
+                  </div>
                 </div>
 
                 <label className="block">
@@ -186,7 +215,7 @@ export const DocumentNamingSettings: React.FC = () => {
 
                 <button
                   type="button"
-                  onClick={() => void save(config.doctype)}
+                  onClick={() => void save(config)}
                   disabled={busy === config.doctype}
                   className={actionButton}
                 >

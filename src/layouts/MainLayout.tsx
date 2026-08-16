@@ -13,6 +13,8 @@ import {
   ChevronRight,
   ArrowRight,
   Info,
+  Hash,
+  ShieldCheck,
   LogOut
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
@@ -39,11 +41,19 @@ const menuItems = [
   { id: 'zones', label: 'مناطق التوصيل', icon: MapPin },
   { id: 'finances', label: 'المالية', icon: Wallet },
   { id: 'reports', label: 'التقارير', icon: PieChart },
+  { id: 'permissions', label: 'صلاحيات المتجر', icon: ShieldCheck },
+];
+
+/** Sections an administrator gets on top of the eight everyone works in. */
+const adminItems = [
+  { id: 'naming', label: 'تسمية المستندات', icon: Hash },
+  { id: 'audit', label: 'سجل التدقيق', icon: ShieldCheck },
 ];
 
 export const MainLayout: React.FC<MainLayoutProps> = ({
   children, activeTab, setActiveTab, profile, storeName, onExitStore,
 }) => {
+  const navItems = profile.role === 'admin' ? [...menuItems, ...adminItems] : menuItems;
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [showAbout, setShowAbout] = useState(false);
 
@@ -135,7 +145,7 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
                 <span className="font-semibold">كل المتاجر</span>
               </button>
               <div className="flex-1 overflow-y-auto no-scrollbar space-y-1">
-                {menuItems.map((item) => (
+                {navItems.map((item) => (
                   <button
                     key={item.id}
                     onClick={() => { setActiveTab(item.id); setIsMobileMenuOpen(false); }}
@@ -182,7 +192,7 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
         </div>
 
         <div className="flex-1 overflow-y-auto no-scrollbar p-4 space-y-1 mt-4">
-          {menuItems.map((item) => (
+          {navItems.map((item) => (
             <button
               key={item.id}
               onClick={() => setActiveTab(item.id)}

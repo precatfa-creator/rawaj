@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useEffect, useState, ReactNode } from 'react';
 import { AlertCircle, RefreshCw } from 'lucide-react';
-import { Store, Product, Customer, DeliveryZone, DocumentNaming, SalesRep } from '../types';
+import { Store, Product, Customer, City, DeliveryZone, DocumentNaming, Municipality, SalesRep, ZoneScope } from '../types';
 import { supabase } from '../db/supabase';
 import { byCode, zoneFromRow } from '../lib/zones';
 
@@ -13,9 +13,10 @@ import { byCode, zoneFromRow } from '../lib/zones';
  * composer needs selectable lists, so it gets a capped slice rather than the
  * full table.
  *
- * Almost everything here is scoped to the open store: customers, sales reps,
- * categories and zones all belong to one store now, so they reload when the
- * store changes rather than showing another store's records.
+ * Products, orders, categories and financial data are scoped to the open store.
+ * Customers, sales reps and effective zones are scoped to the active business
+ * group, so linked stores can work with the shared roster without changing
+ * store-attributed reporting.
  */
 export const PICKER_LIMIT = 200;
 
@@ -25,7 +26,13 @@ interface AppState {
   zones: DeliveryZone[];
   /** Category names for this store's item picker. */
   categories: string[];
+  /** المدينة الكبرى / النطاق الجغرافي / البلدية — the masters a zone links to. */
+  cities: City[];
+  zoneScopes: ZoneScope[];
+  municipalities: Municipality[];
   salesReps: SalesRep[];
+  /** Store ids in the active business group whose shared rosters are visible. */
+  sharedStoreIds: string[];
   pickerProducts: Product[];
   pickerCustomers: Customer[];
   /** True when a picker list was truncated at PICKER_LIMIT. */
@@ -41,7 +48,7 @@ interface AppState {
 
 const AppContext = createContext<AppState | undefined>(undefined);
 
-const storeColumns = 'id,name,image,facebookPage:facebook_page,productCount:product_count,customerCount:customer_count,orderCount:order_count,totalProfit:total_profit,lastActivity:last_activity';
+const storeColumns = 'id,storeCode:store_code,name,image,facebookPage:facebook_page,mobileNumber:mobile_number,businessGroupId:business_group_id,productCount:product_count,customerCount:customer_count,orderCount:order_count,totalProfit:total_profit,lastActivity:last_activity';
 const productColumns = 'id,storeId:store_id,name,description,images,purchasePrice:purchase_price,sellingPrice:selling_price,margin,sku,barcode,brand,provider,category,defaultSerial:default_serial,colors,sizes,stock,minStock:min_stock,status,addedAt:added_at,salesCount:sales_count';
 const salesRepColumns = 'id,storeId:store_id,code,name,phone,whatsapp,zones,commission,active,note,createdAt:created_at';
 const customerColumns = 'id,storeId:store_id,code,name,phone,whatsapp,city,address,orderCount:order_count,totalSpent:total_spent,lastPurchase:last_purchase,rating,status';
@@ -60,7 +67,11 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
   const [stores, setStores] = useState<Store[]>([]);
   const [zones, setZones] = useState<DeliveryZone[]>([]);
   const [categories, setCategories] = useState<string[]>([]);
+  const [cities, setCities] = useState<City[]>([]);
+  const [zoneScopes, setZoneScopes] = useState<ZoneScope[]>([]);
+  const [municipalities, setMunicipalities] = useState<Municipality[]>([]);
   const [salesReps, setSalesReps] = useState<SalesRep[]>([]);
+  const [sharedStoreIds, setSharedStoreIds] = useState<string[]>([]);
   const [pickerProducts, setPickerProducts] = useState<Product[]>([]);
   const [pickerCustomers, setPickerCustomers] = useState<Customer[]>([]);
   const [pickersTruncated, setPickersTruncated] = useState(false);
@@ -94,10 +105,29 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
      * Postgres so every reader gets the same answer.
      */
     const loadZones = async () => {
-      const { data, error } = await supabase.rpc('store_zones', { p_store_id: activeStoreId });
+      const { data, error } = await supabase.rpc('business_group_zones', { p_store_id: activeStoreId });
       if (error) return reportError('delivery_zones', error);
       reportSuccess('delivery_zones');
       if (active) setZones((data ?? []).map(zoneFromRow).sort(byCode));
+    };
+
+    /**
+     * The three hierarchy masters a zone links to. Shared, so they load once and
+     * do not depend on the open store.
+     */
+    const loadHierarchy = async () => {
+      const [cityRows, scopeRows, muniRows] = await Promise.all([
+        supabase.from('cities').select('id,name,region,active').order('name'),
+        supabase.from('zone_scopes').select('id,cityId:city_id,name').order('name'),
+        supabase.from('municipalities').select('id,name').order('name'),
+      ]);
+      const failed = cityRows.error || scopeRows.error || muniRows.error;
+      if (failed) return reportError('zone_hierarchy', failed);
+      reportSuccess('zone_hierarchy');
+      if (!active) return;
+      setCities((cityRows.data ?? []) as unknown as City[]);
+      setZoneScopes((scopeRows.data ?? []) as unknown as ZoneScope[]);
+      setMunicipalities((muniRows.data ?? []) as unknown as Municipality[]);
     };
 
     const loadCategories = async () => {
@@ -111,21 +141,33 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
 
     const loadSalesReps = async () => {
       let request = supabase.from('sales_reps').select(salesRepColumns).order('name');
-      if (activeStoreId) request = request.eq('store_id', activeStoreId);
+      if (sharedStoreIds.length > 0) request = request.in('store_id', sharedStoreIds);
       const { data, error } = await request;
       if (error) return reportError('sales_reps', error);
       reportSuccess('sales_reps');
       if (active) setSalesReps((data ?? []) as unknown as SalesRep[]);
     };
 
+    /**
+     * Through the RPC for the same reason zones are: a store's effective config
+     * is its own row where it has one and the shared default otherwise, and
+     * `next_document_name` resolves it the same way. Two answers to "which
+     * series is in force" would mean documents numbered by a pattern the
+     * settings screen never showed.
+     */
     const loadDocumentNaming = async () => {
-      const { data, error } = await supabase
-        .from('document_naming')
-        .select('doctype,label,series,defaultSeries:default_series,perStore:per_store')
-        .order('label');
+      const { data, error } = await supabase.rpc('store_document_naming', { p_store_id: activeStoreId });
       if (error) return reportError('document_naming', error);
       reportSuccess('document_naming');
-      if (active) setDocumentNaming((data ?? []) as unknown as DocumentNaming[]);
+      if (!active) return;
+      setDocumentNaming((data ?? []).map((row: Record<string, unknown>) => ({
+        doctype: row.doctype as string,
+        label: row.label as string,
+        series: (row.series ?? []) as string[],
+        defaultSeries: row.default_series as string,
+        perStore: row.per_store as boolean,
+        storeKey: row.store_key as string,
+      })).sort((a, b) => a.label.localeCompare(b.label, 'ar')));
     };
 
     const loadPickers = async () => {
@@ -133,7 +175,7 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
       const customerQuery = supabase.from('customers').select(customerColumns).order('name').limit(PICKER_LIMIT);
       const [products, customers] = await Promise.all([
         activeStoreId ? productQuery.eq('store_id', activeStoreId) : productQuery,
-        activeStoreId ? customerQuery.eq('store_id', activeStoreId) : customerQuery,
+        sharedStoreIds.length > 0 ? customerQuery.in('store_id', sharedStoreIds) : customerQuery,
       ]);
       if (products.error) reportError('products', products.error); else reportSuccess('products');
       if (customers.error) reportError('customers', customers.error); else reportSuccess('customers');
@@ -148,7 +190,7 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
     const loadAll = async () => {
       setLoading(true);
       await Promise.all([
-        loadStores(), loadZones(), loadCategories(), loadSalesReps(), loadDocumentNaming(), loadPickers(),
+        loadStores(), loadZones(), loadHierarchy(), loadCategories(), loadSalesReps(), loadDocumentNaming(), loadPickers(),
       ]);
       if (active) setLoading(false);
     };
@@ -159,6 +201,8 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
       .channel('reference-data')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'stores' }, () => void loadStores())
       .on('postgres_changes', { event: '*', schema: 'public', table: 'delivery_zones' }, () => void loadZones())
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'cities' }, () => void loadHierarchy())
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'zone_scopes' }, () => void loadHierarchy())
       .on('postgres_changes', { event: '*', schema: 'public', table: 'categories' }, () => void loadCategories())
       .on('postgres_changes', { event: '*', schema: 'public', table: 'sales_reps' }, () => void loadSalesReps())
       .on('postgres_changes', { event: '*', schema: 'public', table: 'document_naming' }, () => void loadDocumentNaming())
@@ -170,15 +214,23 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
       active = false;
       void supabase.removeChannel(channel);
     };
-    // Everything but `stores` and the naming config is scoped to the open store,
-    // so switching store reloads them rather than showing the previous store's.
-  }, [reloadToken, activeStoreId]);
+    // Everything but `stores` is scoped to the open store, so switching store
+    // reloads them rather than showing the previous store's.
+  }, [reloadToken, activeStoreId, stores.length, sharedStoreIds.join(',')]);
+
+  useEffect(() => {
+    const active = stores.find(store => store.id === activeStoreId);
+    const next = active
+      ? stores.filter(store => store.businessGroupId === active.businessGroupId).map(store => store.id)
+      : [];
+    setSharedStoreIds(current => current.join(',') === next.join(',') ? current : next);
+  }, [stores, activeStoreId]);
 
   const reload = () => setReloadToken(token => token + 1);
 
   return (
     <AppContext.Provider value={{
-      stores, zones, categories, salesReps, pickerProducts, pickerCustomers, pickersTruncated,
+      stores, zones, categories, cities, zoneScopes, municipalities, salesReps, sharedStoreIds, pickerProducts, pickerCustomers, pickersTruncated,
       documentNaming, activeStoreId, setActiveStore: setActiveStoreId, loading, failedResources, reload,
     }}>
       {loading ? (

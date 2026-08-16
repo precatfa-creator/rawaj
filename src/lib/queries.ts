@@ -26,6 +26,10 @@ export interface PagedQuery {
   columns: string;
   /** Equality filters; undefined values are skipped. */
   match?: Record<string, string | undefined>;
+  /** IN filters used for records shared by stores in one business group. */
+  matchIn?: Record<string, string[]>;
+  /** Column that must be null — how the portal asks for rows no store owns. */
+  isNull?: string;
   /** Range comparisons; empty values are skipped. */
   filters?: RangeFilter[];
   /**
@@ -47,8 +51,9 @@ export interface PagedQuery {
  * number that only describes the current 24 rows.
  */
 export const usePagedList = <T,>(query: PagedQuery): Page<T> => {
-  const { table, columns, match, filters, search, orderBy, ascending = false, page, pageSize = PAGE_SIZE } = query;
+  const { table, columns, match, matchIn, isNull, filters, search, orderBy, ascending = false, page, pageSize = PAGE_SIZE } = query;
   const matchKey = JSON.stringify(match ?? {});
+  const matchInKey = JSON.stringify(matchIn ?? {});
   // Serialised for the same reason `match` is: an array literal rebuilt on every
   // render would restart the effect on every keystroke.
   const filtersKey = JSON.stringify(filters ?? []);
@@ -71,6 +76,11 @@ export const usePagedList = <T,>(query: PagedQuery): Page<T> => {
       Object.entries(JSON.parse(matchKey) as Record<string, string | undefined>).forEach(([column, value]) => {
         if (value !== undefined && value !== null && value !== '') request = request.eq(column, value);
       });
+      Object.entries(JSON.parse(matchInKey) as Record<string, string[]>).forEach(([column, values]) => {
+        if (values.length > 0) request = request.in(column, values);
+      });
+
+      if (isNull) request = request.is(isNull, null);
 
       (JSON.parse(filtersKey) as RangeFilter[]).forEach(({ column, op, value }) => {
         if (value !== '') request = op === 'gte' ? request.gte(column, value) : request.lte(column, value);
@@ -98,7 +108,7 @@ export const usePagedList = <T,>(query: PagedQuery): Page<T> => {
 
     void run();
     return () => { active = false; };
-  }, [table, columns, matchKey, filtersKey, search, orderBy, ascending, page, pageSize, token]);
+  }, [table, columns, matchKey, matchInKey, isNull, filtersKey, search, orderBy, ascending, page, pageSize, token]);
 
   // Realtime keeps the *current page* fresh rather than patching rows into local
   // state, which would reintroduce optimistic-update drift.
@@ -248,10 +258,14 @@ export const searchOptions = async (
   term: string,
   match: Record<string, string | undefined> = {},
   limit = 30,
+  matchIn: Record<string, string[]> = {},
 ): Promise<Record<string, unknown>[]> => {
   let request = supabase.from(table).select(columns);
   Object.entries(match).forEach(([column, value]) => {
     if (value) request = request.eq(column, value);
+  });
+  Object.entries(matchIn).forEach(([column, values]) => {
+    if (values.length > 0) request = request.in(column, values);
   });
   const normalized = normalizeArabic(term);
   if (normalized) request = request.ilike('search_text', `%${normalized}%`);

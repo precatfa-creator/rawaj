@@ -13,6 +13,9 @@ import { Finances } from './pages/Finances';
 import { Reports } from './pages/Reports';
 import { AuditLog } from './pages/AuditLog';
 import { DocumentNamingSettings } from './pages/DocumentNaming';
+import { RolePermissionManager } from './pages/RolePermissionManager';
+import { StoreNetwork } from './pages/StoreNetwork';
+import { DocTypeBuilder } from './pages/DocTypeBuilder';
 import { Login } from './pages/Login';
 import { isSupabaseConfigured, supabase } from './db/supabase';
 import { DEFAULT_STORE_SECTION, useRoute } from './lib/route';
@@ -59,14 +62,16 @@ const Workspace: React.FC<{ profile: Profile }> = ({ profile }) => {
           tab={portalTab}
           onTabChange={tab => navigate({ view: tab, storeId: null, page: 0 })}
           showUsers={route.view === 'users'}
-          panel={profile.role !== 'admin' ? null
-            : route.view === 'audit'
-              ? <AuditLog page={route.page} onPage={p => navigate({ view: 'audit', storeId: null, page: p })} />
-              : route.view === 'naming'
-                ? <DocumentNamingSettings />
-                : null}
+          panel={profile.role === 'admin' && route.view === 'audit'
+            ? <AuditLog storeId={null} page={route.page} onPage={p => navigate({ view: 'audit', storeId: null, page: p })} />
+            : route.view === 'network'
+              ? <StoreNetwork />
+            : profile.role === 'admin' && route.view === 'doctypes'
+              ? <DocTypeBuilder />
+            : null}
           onShowAudit={() => navigate({ view: 'audit', storeId: null, page: 0 })}
-          onShowNaming={() => navigate({ view: 'naming', storeId: null, page: 0 })}
+          onShowNetwork={() => navigate({ view: 'network', storeId: null, page: 0 })}
+          onShowDocTypes={() => navigate({ view: 'doctypes', storeId: null, page: 0 })}
           onShowUsers={show => navigate({ view: show ? 'users' : 'stats', storeId: null, page: 0 })}
           onOpenStore={id => navigate({ view: DEFAULT_STORE_SECTION, storeId: id, page: 0 })}
         />
@@ -95,6 +100,13 @@ const Workspace: React.FC<{ profile: Profile }> = ({ profile }) => {
       case 'finances': return <Finances />;
       case 'reports': return <Reports />;
       case 'agents': return <SalesReps />;
+      // Admin-only sections. A non-admin who types the URL gets the products
+      // list rather than an empty shell — the nav never offered them the link.
+      case 'naming': return profile.role === 'admin'
+        ? <DocumentNamingSettings storeId={store.id} /> : <Products {...paging} />;
+      case 'audit': return profile.role === 'admin'
+        ? <AuditLog storeId={store.id} {...paging} /> : <Products {...paging} />;
+      case 'permissions': return <RolePermissionManager storeId={store.id} />;
       default: return <Products {...paging} />;
     }
   };

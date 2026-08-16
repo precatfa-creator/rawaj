@@ -57,12 +57,13 @@ export const nextDocumentName = async (
 
 // ---- stores ----
 
-export type StoreDraft = Pick<Store, 'id' | 'name' | 'image' | 'facebookPage'>;
+export type StoreDraft = Pick<Store, 'id' | 'name' | 'image' | 'facebookPage' | 'mobileNumber'>;
 
 const storeRow = (draft: StoreDraft) => trimRow({
   name: draft.name,
   image: draft.image,
   facebook_page: draft.facebookPage,
+  mobile_number: draft.mobileNumber,
 });
 
 export const saveStore = (draft: StoreDraft, isNew: boolean) =>
@@ -385,12 +386,52 @@ export const setOrderAgent = (orderIds: string[], agentId: string | null) =>
 
 export type ZoneDraft = Pick<
   DeliveryZone,
-  'id' | 'code' | 'name' | 'region' | 'capital' | 'fee' | 'deliveryTimeDays' | 'active'
-  | 'commissionType' | 'commissionValue'
+  'id' | 'code' | 'name' | 'region' | 'fee' | 'deliveryTimeDays' | 'active'
+  | 'commissionType' | 'commissionValue' | 'altName'
+  | 'cityId' | 'scopeId' | 'municipalityId'
 > & {
   /** Null when the row being edited is one of the shared defaults. */
   storeId?: string | null;
 };
+
+/**
+ * Finds or creates one of the hierarchy masters, and returns its id.
+ *
+ * Same shape as `createCategory`, for the same reason: the unique index is on
+ * `ar_normalize(name)`, so a collision means the normalised forms match while
+ * the raw text differs — «فاطمه» against «فاطمة» — and matching on raw text
+ * would never find the row that caused the collision.
+ *
+ * This is what stops a Link field becoming a wall: importing a sheet that names
+ * a city nobody has entered yet creates it instead of failing the row.
+ */
+const findOrCreate = async (
+  table: 'cities' | 'zone_scopes' | 'municipalities',
+  name: string,
+  extra: Record<string, unknown> = {},
+): Promise<string | null> => {
+  const trimmed = name.trim();
+  if (!trimmed) return null;
+
+  const { data, error } = await supabase
+    .from(table).insert({ name: trimmed, ...extra }).select('id').maybeSingle();
+  if (!error && data) return data.id as string;
+
+  if (`${error?.message ?? ''}`.includes('duplicate key')) {
+    const { data: rows } = await supabase.from(table).select('id,name').match(extra);
+    const target = normalizeArabic(trimmed);
+    const hit = (rows ?? []).find(row => normalizeArabic(row.name as string) === target);
+    if (hit) return hit.id as string;
+  }
+
+  console.error(`findOrCreate ${table} failed`, error);
+  return null;
+};
+
+export const createCity = (name: string) => findOrCreate('cities', name);
+export const createZoneScope = (name: string, cityId: string) =>
+  findOrCreate('zone_scopes', name, { city_id: cityId });
+export const createMunicipality = (name: string) => findOrCreate('municipalities', name);
 
 /**
  * Saving a zone, copy-on-write.
@@ -427,7 +468,13 @@ export const saveZone = async (
   const row = trimRow({
     name: draft.name,
     region: draft.region,
-    capital: draft.capital,
+    // Links only. `city`, `scope` and `municipality` are written by the
+    // `zone_hierarchy_sync` trigger from whatever these point at, so sending
+    // both would let a stale label overwrite a fresh one.
+    city_id: draft.cityId,
+    scope_id: draft.scopeId,
+    municipality_id: draft.municipalityId,
+    alt_name: draft.altName,
     fee: draft.fee,
     delivery_time_days: draft.deliveryTimeDays,
     active: draft.active,

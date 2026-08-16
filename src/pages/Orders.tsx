@@ -34,7 +34,7 @@ const dateField =
   'w-full bg-white border border-surface-200 rounded-xl px-3 py-2 text-sm font-bold tabular-nums focus:outline-none focus:ring-2 focus:ring-primary-500/30 focus:border-primary-500';
 
 export const Orders: React.FC<PagedProps> = ({ page, onPage }) => {
-  const { stores, pickerProducts, pickerCustomers, zones, salesReps, activeStoreId } = useAppStore();
+  const { stores, pickerProducts, pickerCustomers, zones, salesReps, activeStoreId, sharedStoreIds } = useAppStore();
   const [filters, setFilters] = useState<OrderFilters>(() => emptyOrderFilters(activeStoreId));
   const [showFilters, setShowFilters] = useState(false);
   const [sort, setSort] = useState<'newest' | 'oldest'>('newest');
@@ -501,6 +501,7 @@ export const Orders: React.FC<PagedProps> = ({ page, onPage }) => {
         customers={pickerCustomers}
         zones={zones}
         salesReps={salesReps}
+        customerStoreIds={sharedStoreIds}
         onClose={() => { setCreating(false); setEditing(null); }}
       />
 

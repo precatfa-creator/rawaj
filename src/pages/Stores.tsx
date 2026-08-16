@@ -122,6 +122,7 @@ export const Stores: React.FC<{ onOpenStore: (storeId: string) => void }> = ({ o
                         <span className="w-2 h-2 rounded-full bg-emerald-400" />
                         {totalsFor?.order_count ?? 0} طلب مسجّل
                       </p>
+                      <p className="text-surface-200 text-xs font-mono mt-1" dir="ltr">{store.storeCode}</p>
                     </div>
                   </div>
 

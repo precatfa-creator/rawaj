@@ -34,8 +34,9 @@ export const OrderForm: React.FC<{
   customers: Customer[];
   zones: DeliveryZone[];
   salesReps: SalesRep[];
+  customerStoreIds?: string[];
   onClose: () => void;
-}> = ({ open, order = null, storeId, products, customers, zones, salesReps, onClose }) => {
+}> = ({ open, order = null, storeId, products, customers, zones, salesReps, customerStoreIds = [storeId], onClose }) => {
   const isEdit = order !== null;
   const [customerId, setCustomerId] = useState('');
   const [customerName, setCustomerName] = useState('');
@@ -217,7 +218,10 @@ export const OrderForm: React.FC<{
             const picked = customers.find(c => c.id === value);
             setCustomerName(picked?.name ?? '');
             // Prefill the fee from the customer's city when it maps to a zone.
-            const match = zones.find(z => z.active && (z.name === picked?.city || z.capital === picked?.city));
+            // The area first, then the city it sits in — a customer who wrote
+            // «طرابلس» rather than a neighbourhood still gets a fee.
+            const match = zones.find(z => z.active && z.name === picked?.city)
+              ?? zones.find(z => z.active && z.city === picked?.city);
             if (match) { setZoneId(match.id); setDeliveryFee(match.fee); }
           }}
           // The order being edited may belong to a customer outside the preloaded
@@ -231,7 +235,7 @@ export const OrderForm: React.FC<{
           ]}
           // Scoped to this store: customers belong to one store now, and an
           // order can only be for a customer of the store it belongs to.
-          onSearch={async term => (await searchOptions('customers', 'id,name,city', term, { store_id: storeId }))
+          onSearch={async term => (await searchOptions('customers', 'id,name,city', term, {}, 30, { store_id: customerStoreIds }))
             .map(row => ({ value: row.id as string, label: row.name as string, hint: (row.city as string) || 'بدون مدينة' }))}
           placeholder="اختر عميلاً"
         />

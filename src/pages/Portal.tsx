@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { motion } from 'motion/react';
-import { ArrowRight, BarChart3, Hash, Info, LogOut, Settings, ShieldCheck, Store as StoreIcon } from 'lucide-react';
+import { ArrowRight, BarChart3, Blocks, Info, Link2, LogOut, Settings, ShieldCheck, Store as StoreIcon } from 'lucide-react';
 import { useAppStore } from '../store';
 import { supabase } from '../db/supabase';
 import { AboutModal } from '../components/AboutModal';
@@ -23,10 +23,11 @@ interface PortalProps {
   onTabChange: (tab: PortalTab) => void;
   showUsers: boolean;
   onShowUsers: (show: boolean) => void;
-  /** Rendered in place of the tabs by the admin-only routes (audit, naming). */
+  /** Rendered in place of the tabs by the admin-only system log route. */
   panel?: React.ReactNode;
   onShowAudit: () => void;
-  onShowNaming: () => void;
+  onShowNetwork: () => void;
+  onShowDocTypes: () => void;
   onOpenStore: (storeId: string) => void;
 }
 
@@ -36,7 +37,7 @@ interface PortalProps {
  * level down, inside a store.
  */
 export const Portal: React.FC<PortalProps> = ({
-  profile, tab, onTabChange, showUsers, onShowUsers, panel, onShowAudit, onShowNaming, onOpenStore,
+  profile, tab, onTabChange, showUsers, onShowUsers, panel, onShowAudit, onShowNetwork, onShowDocTypes, onOpenStore,
 }) => {
   const { stores } = useAppStore();
   const [showAbout, setShowAbout] = useState(false);
@@ -82,21 +83,24 @@ export const Portal: React.FC<PortalProps> = ({
                 type="button"
                 onClick={onShowAudit}
                 className={iconButton}
-                aria-label="سجل التدقيق"
-                title="سجل التدقيق"
+                aria-label="سجل النظام"
+                title="سجل النظام — التغييرات التي لا تخص متجراً بعينه"
               >
                 <ShieldCheck size={20} />
               </button>
             )}
+            <button
+              type="button"
+              onClick={onShowNetwork}
+              className={iconButton}
+              aria-label="شبكة المتاجر"
+              title="شبكة المتاجر وربط المتاجر المملوكة"
+            >
+              <Link2 size={20} />
+            </button>
             {profile.role === 'admin' && (
-              <button
-                type="button"
-                onClick={onShowNaming}
-                className={iconButton}
-                aria-label="تسمية المستندات"
-                title="تسمية المستندات"
-              >
-                <Hash size={20} />
+              <button type="button" onClick={onShowDocTypes} className={iconButton} aria-label="منشئ DocType" title="منشئ DocType">
+                <Blocks size={20} />
               </button>
             )}
             {profile.role === 'admin' && (
