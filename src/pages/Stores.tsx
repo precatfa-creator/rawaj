@@ -6,6 +6,7 @@ import { useStoreTotals } from '../lib/queries';
 import { deleteStore } from '../lib/mutations';
 import { Confirm } from '../components/Confirm';
 import { StoreForm } from '../components/forms';
+import { CopyableCode } from '../components/ui';
 import type { Store } from '../types';
 
 const formatNumber = (value: number) => Math.round(value).toLocaleString('en-US');
@@ -100,6 +101,24 @@ export const Stores: React.FC<{ onOpenStore: (storeId: string) => void }> = ({ o
                   </a>
                 )}
 
+                {/* Sibling of the open button, not a child: nesting a button
+                    inside a button is invalid markup, and clicking the code
+                    should copy it rather than open the store.
+
+                    Pinned to the foot of the image rather than a corner — the
+                    top-left corner holds edit and delete, the top-right holds
+                    the Facebook link, and the name sits bottom-right in RTL.
+                    The wrapper matches the image's own h-48 so the chip tracks
+                    it instead of relying on a hand-measured offset, and it lets
+                    clicks through everywhere except on the chip itself. */}
+                <div className="absolute top-0 left-0 h-48 flex items-end p-4 z-10 pointer-events-none">
+                  <CopyableCode
+                    value={store.storeCode}
+                    tone="dark"
+                    className="pointer-events-auto bg-surface-900/50 backdrop-blur-sm px-2 py-1"
+                  />
+                </div>
+
                 <button
                   type="button"
                   onClick={() => onOpenStore(store.id)}
@@ -122,7 +141,6 @@ export const Stores: React.FC<{ onOpenStore: (storeId: string) => void }> = ({ o
                         <span className="w-2 h-2 rounded-full bg-emerald-400" />
                         {totalsFor?.order_count ?? 0} طلب مسجّل
                       </p>
-                      <p className="text-surface-200 text-xs font-mono mt-1" dir="ltr">{store.storeCode}</p>
                     </div>
                   </div>
 

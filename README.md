@@ -1,4 +1,4 @@
-# Rawaj
+# ESYSTM (السستم)
 
 React/Vite commerce dashboard backed by Supabase Postgres, Auth, Realtime, and an admin-only Edge Function.
 
@@ -113,3 +113,22 @@ The **منشئ DocType** is available to system administrators from the portal. 
 - `SUPABASE_SERVICE_ROLE_KEY` bypasses RLS. It is only used by the bootstrap script and Supabase's server-side Edge Function environment.
 - Do not expose the service-role key or administrator password through a `VITE_` variable.
 - Business report results and the administrator's prompts are sent to Puter and the selected AI provider to produce answers. Do not use the assistant for secrets or data outside its predefined reports.
+
+## Installable app (PWA)
+
+`public/manifest.webmanifest` plus `public/sw.js` make the build installable and
+let it open offline. The worker is registered from `src/main.tsx` in production
+builds only — in `npm run dev` it would serve stale modules and fight HMR.
+
+Caching is runtime-only: same-origin `GET`s, the document network-first (hash
+routing means every navigation is `/`, so a cached one would pin users to an old
+build), hashed assets cache-first. Supabase is cross-origin and is never cached,
+so rows and sessions are always live. `node scripts/sw.check.mjs` runs the real
+worker against a fake scope and asserts those routing decisions.
+
+`public/icon-192.png` and `icon-512.png` are flat brand-colour tiles generated as
+placeholders — drop real artwork at those paths to replace them, same sizes.
+
+Settings → «تفضيلاتي» has «مسح ذاكرة التطبيق»: it deletes the caches, unregisters
+the worker and reloads. It removes only this app's own `localStorage` keys, never
+the whole store, because the Supabase session lives there too.

@@ -26,8 +26,8 @@ interface AboutModalProps {
 
 const developerInfo = {
   name: 'م. عمر',
-  title: 'مطور ومصمم نظام رَوَاج',
-  bio: 'مهندس برمجيات متخصص في بناء الحلول الرقمية وتجارب الاستخدام الراقية. طُوّر نظام «رَوَاج» ليجمع إدارة المتاجر والطلبات والعملاء والمالية في مساحة واحدة بسيطة وموثوقة، ويساعد أصحاب الأعمال على اتخاذ قرارات أوضح كل يوم.',
+  title: 'مطور ومصمم نظام السستم',
+  bio: 'مهندس برمجيات متخصص في بناء الحلول الرقمية وتجارب الاستخدام الراقية. طُوّر نظام «السستم» ليجمع إدارة المتاجر والطلبات والعملاء والمالية في مساحة واحدة بسيطة وموثوقة، ويساعد أصحاب الأعمال على اتخاذ قرارات أوضح كل يوم.',
   github: 'https://github.com/omarmail092',
   telegram: 'https://t.me/Omar25Muhammad',
   whatsapp: 'https://wa.me/218945953967',
@@ -117,7 +117,7 @@ export const AboutModal: React.FC<AboutModalProps> = ({ isOpen, onClose }) => {
               ref={closeButtonRef}
               type="button"
               onClick={onClose}
-              aria-label="إغلاق نافذة عن رواج"
+              aria-label="إغلاق نافذة عن السستم"
               className="absolute left-4 top-4 z-10 inline-flex h-10 w-10 items-center justify-center rounded-full bg-surface-100 text-surface-500 transition-colors hover:bg-surface-200 hover:text-surface-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500"
             >
               <X size={18} />
@@ -153,7 +153,7 @@ export const AboutModal: React.FC<AboutModalProps> = ({ isOpen, onClose }) => {
               <div className="w-full rounded-2xl border border-surface-200/80 bg-surface-50/80 p-4">
                 <div className="mb-2 flex items-center justify-center gap-1.5 text-primary-700">
                   <Sparkles size={14} />
-                  <span className="text-xs font-black">عن رَوَاج</span>
+                  <span className="text-xs font-black">عن السستم</span>
                 </div>
                 <p
                   id="about-modal-description"

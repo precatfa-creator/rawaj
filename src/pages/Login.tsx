@@ -34,7 +34,7 @@ export const Login: React.FC<LoginProps> = ({ authNotice }) => {
   };
 
   return (
-    <div className="min-h-screen bg-surface-50 flex items-center justify-center p-4 relative overflow-hidden rtl" dir="rtl">
+    <div className="min-h-dvh bg-surface-50 flex items-center justify-center p-4 relative overflow-hidden rtl" dir="rtl">
       <div className="absolute top-1/4 -right-20 w-96 h-96 bg-primary-200 rounded-full blur-[100px] opacity-50 mix-blend-multiply pointer-events-none" />
       <div className="absolute bottom-1/4 -left-20 w-96 h-96 bg-blue-200 rounded-full blur-[100px] opacity-50 mix-blend-multiply pointer-events-none" />
 
@@ -46,7 +46,7 @@ export const Login: React.FC<LoginProps> = ({ authNotice }) => {
       >
         <div className="glass-panel p-8 sm:p-10 rounded-3xl relative">
           <div className="text-center mb-8">
-            <h1 className="font-black text-5xl text-gradient tracking-tight mb-4 pb-2">رَوَاج</h1>
+            <h1 className="font-black text-5xl text-gradient tracking-tight mb-4 pb-2">السستم</h1>
             <p className="text-surface-500 font-medium tracking-wide">تسجيل الدخول إلى لوحة الإدارة</p>
           </div>
 
@@ -110,7 +110,7 @@ export const Login: React.FC<LoginProps> = ({ authNotice }) => {
             className="mx-auto mt-3 flex items-center gap-1.5 rounded-lg px-3 py-2 text-xs font-bold text-surface-500 transition-colors hover:bg-surface-100 hover:text-primary-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500"
           >
             <Info size={15} />
-            عن رَوَاج
+            عن السستم
           </button>
         </div>
       </motion.div>

@@ -163,8 +163,8 @@ const initialMessage = (activeStoreName?: string): DisplayMessage => ({
   id: newId(),
   role: 'assistant',
   content: activeStoreName
-    ? `مرحباً! أنا مساعد بيانات رَوَاج. اسألني عن أداء ${activeStoreName}، المبيعات، المخزون، الطلبات أو العملاء.`
-    : 'مرحباً! أنا مساعد بيانات رَوَاج. اسألني عن المبيعات، الأرباح، المخزون، الطلبات أو أداء المتاجر.',
+    ? `مرحباً! أنا مساعد بيانات السستم. اسألني عن أداء ${activeStoreName}، المبيعات، المخزون، الطلبات أو العملاء.`
+    : 'مرحباً! أنا مساعد بيانات السستم. اسألني عن المبيعات، الأرباح، المخزون، الطلبات أو أداء المتاجر.',
 });
 
 const asText = (content: unknown): string => {
@@ -236,7 +236,7 @@ const buildSystemPrompt = (stores: Store[], activeStoreId: string | null) => {
   const activeStore = stores.find(store => store.id === activeStoreId);
 
   return [
-    'أنت مساعد تحليلي داخل لوحة إدارة رَوَاج. أجب بالعربية الواضحة والموجزة، واستخدم الأرقام العربية الغربية (0-9).',
+    'أنت مساعد تحليلي داخل لوحة إدارة السستم. أجب بالعربية الواضحة والموجزة، واستخدم الأرقام العربية الغربية (0-9).',
     // Markdown is rendered now, so saying so turns ** into bold instead of noise.
     'تُعرض إجابتك بصيغة Markdown: استخدم **الخط العريض** للعناوين الصغيرة، والقوائم النقطية للتعدادات، وجدول Markdown عندما تعرض أكثر من صفين من الأرقام. لا تستخدم عناوين كبيرة (#) ولا كتل شيفرة.',
     'لا تكتب المعرّفات الداخلية (مثل معرّف المتجر أو العميل) في إجابتك؛ استخدم الأسماء. المعرّفات لاستدعاء الأداة فقط.',
@@ -249,7 +249,7 @@ const buildSystemPrompt = (stores: Store[], activeStoreId: string | null) => {
     activeStore
       ? `السياق الحالي هو متجر ${activeStore.name} ومعرّفه ${activeStore.id}. استخدمه افتراضياً ما لم يطلب المدير كل المتاجر أو متجراً آخر.`
       : 'لا يوجد متجر محدد حالياً؛ استخدم كل المتاجر افتراضياً إلا إذا سمّى المدير متجراً بعينه.',
-    'إذا كان السؤال خارج نطاق بيانات رَوَاج، اعتذر باختصار واطلب سؤالاً عن المبيعات أو الأرباح أو الطلبات أو المنتجات أو العملاء أو المخزون وحركاته.',
+    'إذا كان السؤال خارج نطاق بيانات السستم، اعتذر باختصار واطلب سؤالاً عن المبيعات أو الأرباح أو الطلبات أو المنتجات أو العملاء أو المخزون وحركاته.',
   ].join('\n');
 };
 
@@ -403,7 +403,7 @@ export const AdminDatabaseChat: React.FC<AdminDatabaseChatProps> = ({ stores, ac
         <section
           role="dialog"
           aria-modal={size === 'full'}
-          aria-label="مساعد بيانات رواج"
+          aria-label="مساعد بيانات السستم"
           className={`flex flex-col overflow-hidden border-surface-200 bg-white shadow-2xl shadow-surface-900/20 ${PANEL_SIZE_CLASS[size]}`}
         >
           <header className="flex items-center gap-3 border-b border-surface-200 bg-gradient-to-l from-primary-800 to-primary-700 px-4 py-3.5 text-white">
@@ -411,7 +411,7 @@ export const AdminDatabaseChat: React.FC<AdminDatabaseChatProps> = ({ stores, ac
               <Bot size={22} />
             </div>
             <div className="min-w-0 flex-1">
-              <h2 className="truncate font-black">مساعد بيانات رَوَاج</h2>
+              <h2 className="truncate font-black">مساعد بيانات السستم</h2>
               <p className="flex items-center gap-1 text-xs text-primary-100">
                 <ShieldCheck size={13} />
                 للمدير فقط · قراءة فقط · يُرسل البيانات لمزوّد خارجي

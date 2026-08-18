@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { motion } from 'motion/react';
-import { ArrowRight, BarChart3, Blocks, Info, Link2, LogOut, Settings, ShieldCheck, Store as StoreIcon } from 'lucide-react';
+import { ArrowRight, BarChart3, SlidersHorizontal, Blocks, Info, Link2, LogOut, Settings, ShieldCheck, Store as StoreIcon } from 'lucide-react';
 import { useAppStore } from '../store';
 import { supabase } from '../db/supabase';
 import { AboutModal } from '../components/AboutModal';
@@ -28,6 +28,7 @@ interface PortalProps {
   onShowAudit: () => void;
   onShowNetwork: () => void;
   onShowDocTypes: () => void;
+  onShowSettings: () => void;
   onOpenStore: (storeId: string) => void;
 }
 
@@ -37,7 +38,8 @@ interface PortalProps {
  * level down, inside a store.
  */
 export const Portal: React.FC<PortalProps> = ({
-  profile, tab, onTabChange, showUsers, onShowUsers, panel, onShowAudit, onShowNetwork, onShowDocTypes, onOpenStore,
+  profile, tab, onTabChange, showUsers, onShowUsers, panel, onShowAudit, onShowNetwork, onShowDocTypes,
+  onShowSettings, onOpenStore,
 }) => {
   const { stores } = useAppStore();
   const [showAbout, setShowAbout] = useState(false);
@@ -56,27 +58,38 @@ export const Portal: React.FC<PortalProps> = ({
 
   return (
     <div className="min-h-dvh bg-surface-50" dir="rtl">
-      <div className="max-w-[1480px] mx-auto p-4 md:p-6">
-        <header className="glass-panel rounded-2xl px-4 md:px-5 py-4 flex items-center justify-between gap-4 sticky top-3 z-30">
+      <div className="max-w-[1480px] mx-auto p-4 md:p-6 pb-[max(1rem,env(safe-area-inset-bottom))]">
+        <header className="glass-panel rounded-2xl px-4 md:px-5 py-4 flex flex-wrap items-center justify-between gap-3 sticky top-[max(0.75rem,env(safe-area-inset-top))] z-30">
           <div className="flex items-center gap-3 min-w-0">
             <div className="w-11 h-11 rounded-2xl grid place-items-center text-white font-black text-xl bg-gradient-to-br from-primary-500 to-primary-700 shadow-sm shrink-0">
               ر
             </div>
             <div className="min-w-0">
-              <h1 className="text-xl font-black text-primary-800 leading-tight">رَوَاج</h1>
+              <h1 className="text-xl font-black text-primary-800 leading-tight">السستم</h1>
               <p className="text-xs text-surface-500 truncate">كل تجارتك... في مكان واحد</p>
             </div>
           </div>
 
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center justify-end gap-1 sm:gap-2">
             <button
               type="button"
               onClick={() => setShowAbout(true)}
               className={iconButton}
-              aria-label="عن رواج"
-              title="عن رواج"
+              aria-label="عن السستم"
+              title="عن السستم"
             >
               <Info size={20} />
+            </button>
+            {/* Everyone's, unlike the buttons around it: these are the user's
+                own preferences, not administration. */}
+            <button
+              type="button"
+              onClick={onShowSettings}
+              className={iconButton}
+              aria-label="تفضيلاتي"
+              title="تفضيلاتي"
+            >
+              <SlidersHorizontal size={20} />
             </button>
             {profile.role === 'admin' && (
               <button

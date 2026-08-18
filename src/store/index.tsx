@@ -1,6 +1,7 @@
 import React, { createContext, useContext, useEffect, useState, ReactNode } from 'react';
 import { AlertCircle, RefreshCw } from 'lucide-react';
 import { Store, Product, Customer, City, DeliveryZone, DocumentNaming, Municipality, SalesRep, ZoneScope } from '../types';
+import { DEFAULT_SETTINGS, loadSettings, saveSetting, type UserSettings } from '../lib/settings';
 import { supabase } from '../db/supabase';
 import { byCode, zoneFromRow } from '../lib/zones';
 
@@ -39,6 +40,9 @@ interface AppState {
   pickersTruncated: boolean;
   /** How each doctype is numbered. Global, not per store. */
   documentNaming: DocumentNaming[];
+  /** This user's own preferences; nobody else can read or write them. */
+  settings: UserSettings;
+  updateSetting: <K extends keyof UserSettings>(key: K, value: UserSettings[K]) => Promise<boolean>;
   activeStoreId: string | null;
   setActiveStore: (id: string | null) => void;
   loading: boolean;
@@ -76,6 +80,7 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
   const [pickerCustomers, setPickerCustomers] = useState<Customer[]>([]);
   const [pickersTruncated, setPickersTruncated] = useState(false);
   const [documentNaming, setDocumentNaming] = useState<DocumentNaming[]>([]);
+  const [settings, setSettings] = useState<UserSettings>(DEFAULT_SETTINGS);
   const [activeStoreId, setActiveStoreId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [failedResources, setFailedResources] = useState<string[]>([]);
@@ -115,6 +120,13 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
      * The three hierarchy masters a zone links to. Shared, so they load once and
      * do not depend on the open store.
      */
+    // Preferences, not business data: no realtime subscription, and a failure
+    // falls back to the defaults rather than blocking the app.
+    const loadUserSettings = async () => {
+      const loaded = await loadSettings();
+      if (active) setSettings(loaded);
+    };
+
     const loadHierarchy = async () => {
       const [cityRows, scopeRows, muniRows] = await Promise.all([
         supabase.from('cities').select('id,name,region,active').order('name'),
@@ -190,7 +202,7 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
     const loadAll = async () => {
       setLoading(true);
       await Promise.all([
-        loadStores(), loadZones(), loadHierarchy(), loadCategories(), loadSalesReps(), loadDocumentNaming(), loadPickers(),
+        loadStores(), loadZones(), loadHierarchy(), loadCategories(), loadUserSettings(), loadSalesReps(), loadDocumentNaming(), loadPickers(),
       ]);
       if (active) setLoading(false);
     };
@@ -228,13 +240,25 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
 
   const reload = () => setReloadToken(token => token + 1);
 
+  /**
+   * Applied locally first: a preference toggle should feel instant, and the only
+   * way it can fail is the write, which puts the old value straight back.
+   */
+  const updateSetting = async <K extends keyof UserSettings>(key: K, value: UserSettings[K]) => {
+    const previous = settings[key];
+    setSettings(current => ({ ...current, [key]: value }));
+    const ok = await saveSetting(key, value);
+    if (!ok) setSettings(current => ({ ...current, [key]: previous }));
+    return ok;
+  };
+
   return (
     <AppContext.Provider value={{
       stores, zones, categories, cities, zoneScopes, municipalities, salesReps, sharedStoreIds, pickerProducts, pickerCustomers, pickersTruncated,
-      documentNaming, activeStoreId, setActiveStore: setActiveStoreId, loading, failedResources, reload,
+      documentNaming, settings, updateSetting, activeStoreId, setActiveStore: setActiveStoreId, loading, failedResources, reload,
     }}>
       {loading ? (
-        <div className="min-h-screen flex items-center justify-center bg-surface-50">
+        <div className="min-h-dvh flex items-center justify-center bg-surface-50">
           <div className="w-12 h-12 border-4 border-primary-500 border-t-transparent rounded-full animate-spin" />
         </div>
       ) : (
