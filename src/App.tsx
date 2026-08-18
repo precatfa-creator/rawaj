@@ -16,6 +16,7 @@ import { DocumentNamingSettings } from './pages/DocumentNaming';
 import { RolePermissionManager } from './pages/RolePermissionManager';
 import { StoreNetwork } from './pages/StoreNetwork';
 import { DocTypeBuilder } from './pages/DocTypeBuilder';
+import { Preferences } from './pages/Preferences';
 import { Login } from './pages/Login';
 import { isSupabaseConfigured, supabase } from './db/supabase';
 import { DEFAULT_STORE_SECTION, useRoute } from './lib/route';
@@ -68,10 +69,14 @@ const Workspace: React.FC<{ profile: Profile }> = ({ profile }) => {
               ? <StoreNetwork />
             : profile.role === 'admin' && route.view === 'doctypes'
               ? <DocTypeBuilder />
+            // Preferences are the user's own, so every signed-in user gets them.
+            : route.view === 'settings'
+              ? <Preferences />
             : null}
           onShowAudit={() => navigate({ view: 'audit', storeId: null, page: 0 })}
           onShowNetwork={() => navigate({ view: 'network', storeId: null, page: 0 })}
           onShowDocTypes={() => navigate({ view: 'doctypes', storeId: null, page: 0 })}
+          onShowSettings={() => navigate({ view: 'settings', storeId: null, page: 0 })}
           onShowUsers={show => navigate({ view: show ? 'users' : 'stats', storeId: null, page: 0 })}
           onOpenStore={id => navigate({ view: DEFAULT_STORE_SECTION, storeId: id, page: 0 })}
         />
@@ -106,7 +111,8 @@ const Workspace: React.FC<{ profile: Profile }> = ({ profile }) => {
         ? <DocumentNamingSettings storeId={store.id} /> : <Products {...paging} />;
       case 'audit': return profile.role === 'admin'
         ? <AuditLog storeId={store.id} {...paging} /> : <Products {...paging} />;
-      case 'permissions': return <RolePermissionManager storeId={store.id} />;
+      case 'permissions': return profile.role === 'admin'
+        ? <RolePermissionManager storeId={store.id} /> : <Products {...paging} />;
       default: return <Products {...paging} />;
     }
   };
@@ -118,6 +124,8 @@ const Workspace: React.FC<{ profile: Profile }> = ({ profile }) => {
         setActiveTab={view => navigate({ view, storeId: store.id, page: 0 })}
         profile={profile}
         storeName={store.name}
+        storeCode={store.storeCode}
+        storeImage={store.image}
         onExitStore={() => navigate({ view: 'stores', storeId: null, page: 0 })}
       >
         {renderContent()}
@@ -194,7 +202,7 @@ const AppContent: React.FC = () => {
 
   if (isInitializing) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-surface-50">
+      <div className="min-h-dvh flex items-center justify-center bg-surface-50">
         <div className="w-12 h-12 border-4 border-primary-500 border-t-transparent rounded-full animate-spin" />
       </div>
     );

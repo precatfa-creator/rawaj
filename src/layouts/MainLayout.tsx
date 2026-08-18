@@ -11,16 +11,22 @@ import {
   Menu,
   X,
   ChevronRight,
+  ChevronDown,
   ArrowRight,
   Info,
   Hash,
   ShieldCheck,
+  KeyRound,
   LogOut
 } from 'lucide-react';
+import type { LucideIcon } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { supabase } from '../db/supabase';
 import type { Profile } from '../types';
 import { AboutModal } from '../components/AboutModal';
+import { CopyableCode } from '../components/ui';
+import { loadCollapsedGroups, saveCollapsedGroups } from '../lib/settings';
+import { useAppStore } from '../store';
 
 interface MainLayoutProps {
   children: React.ReactNode;
@@ -29,31 +35,130 @@ interface MainLayoutProps {
   profile: Profile;
   /** Name of the store being managed — this shell is always scoped to one. */
   storeName: string;
+  /** Its public code, shown under the name so it can be read out or copied. */
+  storeCode: string;
+  /** Optional cover image, shown under the heading so the store is recognisable. */
+  storeImage: string;
   onExitStore: () => void;
 }
 
-const menuItems = [
-  { id: 'products', label: 'المنتجات', icon: Package },
-  { id: 'movements', label: 'حركات المخزون', icon: History },
-  { id: 'orders', label: 'الطلبات', icon: ShoppingCart },
-  { id: 'customers', label: 'العملاء', icon: Users },
-  { id: 'agents', label: 'المندوبين', icon: Truck },
-  { id: 'zones', label: 'مناطق التوصيل', icon: MapPin },
-  { id: 'finances', label: 'المالية', icon: Wallet },
-  { id: 'reports', label: 'التقارير', icon: PieChart },
-  { id: 'permissions', label: 'صلاحيات المتجر', icon: ShieldCheck },
+/**
+ * The sidebar in groups rather than one run of eleven links.
+ *
+ * Grouped by the question being asked, not by the table behind it: what do we
+ * have (المخزون), who is buying (المبيعات), how does it get there (التوصيل),
+ * how did we do (التقارير). Eleven flat items all read as equally likely, so
+ * the eye has to check every one; four short lists are scanned by heading.
+ *
+ * Order follows the working day — stock, then orders, then delivery, then the
+ * numbers — with the settings nobody opens daily last.
+ */
+const navGroups: Array<{
+  title: string;
+  adminOnly?: boolean;
+  items: Array<{ id: string; label: string; icon: LucideIcon }>;
+}> = [
+  {
+    title: 'المخزون',
+    items: [
+      { id: 'products', label: 'المنتجات', icon: Package },
+      { id: 'movements', label: 'حركات المخزون', icon: History },
+    ],
+  },
+  {
+    title: 'المبيعات',
+    items: [
+      { id: 'orders', label: 'الطلبات', icon: ShoppingCart },
+      { id: 'customers', label: 'العملاء', icon: Users },
+    ],
+  },
+  {
+    title: 'التوصيل',
+    items: [
+      { id: 'agents', label: 'المندوبين', icon: Truck },
+      { id: 'zones', label: 'مناطق التوصيل', icon: MapPin },
+    ],
+  },
+  {
+    title: 'التقارير',
+    items: [
+      { id: 'finances', label: 'المالية', icon: Wallet },
+      { id: 'reports', label: 'التقارير', icon: PieChart },
+    ],
+  },
+  {
+    // Permissions joins naming and the audit log here: all three change how the
+    // store works rather than what it sells, and all three are administrators'.
+    // It used to sit in the everyone list, which offered every user a screen
+    // whose writes the database was going to refuse anyway.
+    title: 'إدارة المتجر',
+    adminOnly: true,
+    items: [
+      { id: 'permissions', label: 'صلاحيات المتجر', icon: KeyRound },
+      { id: 'naming', label: 'تسمية المستندات', icon: Hash },
+      { id: 'audit', label: 'سجل التدقيق', icon: ShieldCheck },
+    ],
+  },
 ];
 
-/** Sections an administrator gets on top of the eight everyone works in. */
-const adminItems = [
-  { id: 'naming', label: 'تسمية المستندات', icon: Hash },
-  { id: 'audit', label: 'سجل التدقيق', icon: ShieldCheck },
-];
+/**
+ * A group label, and its toggle when groups are collapsible.
+ *
+ * The heading itself is the button so the whole label is the target — a chevron
+ * alone is a 16px hit area for something used constantly. When groups are always
+ * shown it renders as a plain heading, with no dead control to explain.
+ */
+const GroupHeading: React.FC<{
+  group: { title: string; items: Array<{ id: string }> };
+  collapsible: boolean;
+  open: boolean;
+  onToggle: () => void;
+  idPrefix?: string;
+}> = ({ group, collapsible, open, onToggle, idPrefix = 'nav-mobile' }) => {
+  const className = 'px-4 mb-1.5 text-[0.68rem] font-black tracking-[0.14em] text-surface-400';
+  if (!collapsible) return <h2 className={className}>{group.title}</h2>;
+
+  return (
+    <h2 className="mb-1.5">
+      <button
+        type="button"
+        onClick={onToggle}
+        aria-expanded={open}
+        aria-controls={`${idPrefix}-${group.title}`}
+        className={`w-full flex items-center justify-between gap-2 rounded-lg py-1 ${className} mb-0
+          hover:text-surface-600 hover:bg-surface-50 transition-colors
+          focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500`}
+      >
+        <span>{group.title}</span>
+        <ChevronDown size={14} className={`shrink-0 transition-transform ${open ? '' : '-rotate-90'}`} />
+      </button>
+    </h2>
+  );
+};
 
 export const MainLayout: React.FC<MainLayoutProps> = ({
-  children, activeTab, setActiveTab, profile, storeName, onExitStore,
+  children, activeTab, setActiveTab, profile, storeName, storeCode, storeImage, onExitStore,
 }) => {
-  const navItems = profile.role === 'admin' ? [...menuItems, ...adminItems] : menuItems;
+  const { settings } = useAppStore();
+  const groups = navGroups.filter(group => !group.adminOnly || profile.role === 'admin');
+
+  // `always` hides the toggles rather than disabling them: a control that
+  // cannot do anything is worse than no control.
+  const collapsible = settings.sidebarGroups === 'collapsible';
+  const [collapsed, setCollapsed] = useState<string[]>(loadCollapsedGroups);
+
+  const toggleGroup = (title: string) => setCollapsed(current => {
+    const next = current.includes(title) ? current.filter(t => t !== title) : [...current, title];
+    saveCollapsedGroups(next);
+    return next;
+  });
+
+  /**
+   * A collapsed group hiding the page you are on reads as a broken nav, so the
+   * group holding the active item stays open whatever the stored state says.
+   */
+  const isOpen = (group: (typeof navGroups)[number]) =>
+    !collapsible || !collapsed.includes(group.title) || group.items.some(item => item.id === activeTab);
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [showAbout, setShowAbout] = useState(false);
 
@@ -79,9 +184,9 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
   const avatarLetter = (profile.displayName || profile.email).slice(0, 1).toUpperCase();
 
   return (
-    <div className="min-h-screen bg-surface-50 flex flex-col md:flex-row rtl" dir="rtl">
+    <div className="min-h-dvh bg-surface-50 flex flex-col md:flex-row rtl" dir="rtl">
       {/* Mobile Header */}
-      <div className="md:hidden glass-header sticky top-0 z-40 flex items-center justify-between p-4">
+      <div className="md:hidden glass-header sticky top-0 z-40 flex items-center justify-between p-4 pt-[max(1rem,env(safe-area-inset-top))]">
         <div className="flex items-center gap-2 min-w-0">
           <button
             onClick={() => setIsMobileMenuOpen(true)}
@@ -122,12 +227,12 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
               animate={{ x: 0 }}
               exit={{ x: '100%' }}
               transition={{ type: 'spring', damping: 25, stiffness: 200 }}
-              className="fixed top-0 right-0 h-full w-72 bg-white/80 backdrop-blur-2xl border-l border-white/50 shadow-2xl z-50 p-6 flex flex-col md:hidden"
+              className="fixed top-0 right-0 h-full w-72 bg-white/80 backdrop-blur-2xl border-l border-white/50 shadow-2xl z-50 p-6 pt-[max(1.5rem,env(safe-area-inset-top))] pb-[max(1.5rem,env(safe-area-inset-bottom))] flex flex-col md:hidden"
             >
               <div className="flex items-start justify-between mb-6 gap-2">
                 <div className="min-w-0">
                   <span className="block font-black text-xl text-surface-900 truncate">{storeName}</span>
-                  <span className="block text-xs text-surface-500 mt-0.5">إدارة المتجر</span>
+                  <CopyableCode value={storeCode} className="mt-0.5" />
                 </div>
                 <button
                   onClick={() => setIsMobileMenuOpen(false)}
@@ -144,22 +249,38 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
                 <ArrowRight size={20} />
                 <span className="font-semibold">كل المتاجر</span>
               </button>
-              <div className="flex-1 overflow-y-auto no-scrollbar space-y-1">
-                {navItems.map((item) => (
-                  <button
-                    key={item.id}
-                    onClick={() => { setActiveTab(item.id); setIsMobileMenuOpen(false); }}
-                    className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-colors duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 ${
-                      activeTab === item.id 
-                        ? 'bg-primary-50 text-primary-700 shadow-sm border border-primary-100' 
-                        : 'text-surface-600 hover:bg-surface-50 hover:text-surface-900'
-                    }`}
-                  >
-                    <item.icon size={20} className={activeTab === item.id ? 'text-primary-500' : 'text-surface-400'} />
-                    <span className="font-semibold">{item.label}</span>
-                  </button>
+              {/* `nav` + a labelled list per group, so a screen reader hears
+                  "المبيعات, list, 2 items" instead of eleven loose buttons. */}
+              <nav aria-label="أقسام المتجر" className="flex-1 overflow-y-auto no-scrollbar space-y-5">
+                {groups.map(group => (
+                  <div key={group.title}>
+                    <GroupHeading
+                      group={group}
+                      collapsible={collapsible}
+                      open={isOpen(group)}
+                      onToggle={() => toggleGroup(group.title)}
+                    />
+                    <ul id={`nav-mobile-${group.title}`} hidden={!isOpen(group)} className="space-y-1">
+                      {group.items.map(item => (
+                        <li key={item.id}>
+                          <button
+                            onClick={() => { setActiveTab(item.id); setIsMobileMenuOpen(false); }}
+                            aria-current={activeTab === item.id ? 'page' : undefined}
+                            className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-colors duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 ${
+                              activeTab === item.id
+                                ? 'bg-primary-50 text-primary-700 shadow-sm border border-primary-100'
+                                : 'text-surface-600 hover:bg-surface-50 hover:text-surface-900'
+                            }`}
+                          >
+                            <item.icon size={20} className={activeTab === item.id ? 'text-primary-500' : 'text-surface-400'} />
+                            <span className="font-semibold">{item.label}</span>
+                          </button>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
                 ))}
-              </div>
+              </nav>
               <button onClick={handleLogout} className="mt-4 flex items-center gap-3 px-4 py-3 rounded-xl text-rose-600 hover:bg-rose-50 transition-colors w-full">
                 <LogOut size={20} />
                 <span className="font-semibold">تسجيل الخروج</span>
@@ -170,7 +291,7 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
                 className="mt-1 flex w-full items-center gap-3 rounded-xl px-4 py-3 text-surface-600 transition-colors hover:bg-surface-50 hover:text-primary-700"
               >
                 <Info size={20} />
-                <span className="font-semibold">عن رَوَاج</span>
+                <span className="font-semibold">عن السستم</span>
               </button>
             </motion.aside>
           </>
@@ -179,40 +300,93 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
 
       {/* Desktop Sidebar */}
       <aside className="hidden md:flex flex-col w-64 h-screen sticky top-0 glass-panel border-r-0 border-l border-white/50 z-40">
-        <div className="p-5 pb-3">
-          <button
-            onClick={onExitStore}
-            className="flex items-center gap-2 text-sm font-bold text-surface-600 hover:text-primary-800 mb-4 rounded-lg px-2 py-1.5 -ms-2 hover:bg-surface-100 transition-colors w-full focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500"
-          >
-            <ArrowRight size={18} />
-            كل المتاجر
-          </button>
-          <h1 className="font-black text-2xl text-surface-900 tracking-tight leading-tight">{storeName}</h1>
-          <p className="text-xs text-surface-500 mt-1 font-medium">إدارة المتجر</p>
-        </div>
+        {/* The store photo is the header, not a thumbnail inside it: the name,
+            the code and the back link all sit on top of it.
 
-        <div className="flex-1 overflow-y-auto no-scrollbar p-4 space-y-1 mt-4">
-          {navItems.map((item) => (
+            Two things keep that readable over an image nobody vetted. The
+            gradient is opaque at the bottom where the text sits and clears
+            towards the top, so a pale photo cannot wash the name out. And when
+            a store has no image the block falls back to the plain light header
+            rather than showing white text on nothing. */}
+        <div className={`relative overflow-hidden ${storeImage ? 'text-white' : ''}`}>
+          {storeImage && (
+            <>
+              <img
+                src={storeImage}
+                alt=""
+                loading="lazy"
+                className="absolute inset-0 w-full h-full object-cover"
+              />
+              <div className="absolute inset-0 bg-gradient-to-t from-surface-900/95 via-surface-900/70 to-surface-900/35" />
+            </>
+          )}
+
+          <div className="relative p-5 pb-4">
             <button
-              key={item.id}
-              onClick={() => setActiveTab(item.id)}
-              className={`w-full flex items-center justify-between px-4 py-3 rounded-2xl transition-colors duration-300 relative group overflow-hidden focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 ${
-                activeTab === item.id 
-                  ? 'bg-primary-50 text-primary-700 shadow-sm border border-primary-100/50' 
-                  : 'text-surface-600 hover:bg-surface-50 hover:text-surface-900'
+              onClick={onExitStore}
+              className={`flex items-center gap-2 text-sm font-bold mb-4 rounded-lg px-2 py-1.5 -ms-2 transition-colors w-full focus-visible:outline-none focus-visible:ring-2 ${
+                storeImage
+                  ? 'text-white/90 hover:text-white hover:bg-white/15 focus-visible:ring-white/70'
+                  : 'text-surface-600 hover:text-primary-800 hover:bg-surface-100 focus-visible:ring-primary-500'
               }`}
             >
-              {activeTab === item.id && (
-                <motion.div layoutId="activeTabIndicator" className="absolute right-0 top-1/4 bottom-1/4 w-1 bg-primary-500 rounded-l-full" />
-              )}
-              <div className="flex items-center gap-3">
-                <item.icon size={20} className={activeTab === item.id ? 'text-primary-500' : 'text-surface-400 group-hover:text-surface-600 transition-colors'} />
-                <span className="font-semibold">{item.label}</span>
-              </div>
-              {activeTab === item.id && <ChevronRight size={16} className="text-primary-400" />}
+              <ArrowRight size={18} />
+              كل المتاجر
             </button>
-          ))}
+            <h1 className={`font-black text-2xl tracking-tight leading-tight ${
+              storeImage ? 'text-white drop-shadow-sm' : 'text-surface-900'
+            }`}>
+              {storeName}
+            </h1>
+            <CopyableCode value={storeCode} tone={storeImage ? 'dark' : 'light'} className="mt-1" />
+            <p className={`text-xs mt-1 font-medium ${storeImage ? 'text-white/75' : 'text-surface-500'}`}>
+              إدارة المتجر
+            </p>
+          </div>
         </div>
+
+        {/* The header now ends on its own edge, so the old `mt-4` that separated
+            it from a padded block would read as a gap under a photo. */}
+        <nav aria-label="أقسام المتجر" className="flex-1 overflow-y-auto no-scrollbar p-4 space-y-5">
+          {groups.map(group => (
+            <div key={group.title}>
+              <GroupHeading
+                group={group}
+                collapsible={collapsible}
+                open={isOpen(group)}
+                onToggle={() => toggleGroup(group.title)}
+                idPrefix="nav-desktop"
+              />
+              <ul id={`nav-desktop-${group.title}`} hidden={!isOpen(group)} className="space-y-1">
+                {group.items.map(item => (
+                  <li key={item.id}>
+                    <button
+                      onClick={() => setActiveTab(item.id)}
+                      aria-current={activeTab === item.id ? 'page' : undefined}
+                      className={`w-full flex items-center justify-between px-4 py-3 rounded-2xl transition-colors duration-300 relative group overflow-hidden focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 ${
+                        activeTab === item.id
+                          ? 'bg-primary-50 text-primary-700 shadow-sm border border-primary-100/50'
+                          : 'text-surface-600 hover:bg-surface-50 hover:text-surface-900'
+                      }`}
+                    >
+                      {/* One shared layoutId across every group, so the marker
+                          slides between groups instead of blinking out here and
+                          reappearing there. */}
+                      {activeTab === item.id && (
+                        <motion.div layoutId="activeTabIndicator" className="absolute right-0 top-1/4 bottom-1/4 w-1 bg-primary-500 rounded-l-full" />
+                      )}
+                      <div className="flex items-center gap-3">
+                        <item.icon size={20} className={activeTab === item.id ? 'text-primary-500' : 'text-surface-400 group-hover:text-surface-600 transition-colors'} />
+                        <span className="font-semibold">{item.label}</span>
+                      </div>
+                      {activeTab === item.id && <ChevronRight size={16} className="text-primary-400" />}
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          ))}
+        </nav>
 
         <div className="p-4 border-t border-surface-200/50 mt-auto">
           <button
@@ -221,7 +395,7 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
             className="mb-3 flex w-full items-center gap-2 rounded-xl px-2 py-2 text-sm font-bold text-surface-500 transition-colors hover:bg-surface-100 hover:text-primary-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500"
           >
             <Info size={17} />
-            عن رَوَاج
+            عن السستم
           </button>
           <div className="flex items-center justify-between px-2">
             <div className="flex items-center gap-3">
@@ -242,7 +416,7 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
 
       {/* Main Content */}
       <main className="flex-1 flex flex-col min-h-0 overflow-hidden relative">
-        <div className="flex-1 overflow-y-auto p-4 md:p-8">
+        <div className="flex-1 overflow-y-auto p-4 md:p-8 pb-[max(1rem,env(safe-area-inset-bottom))]">
           <motion.div
             key={activeTab}
             initial={{ opacity: 0, y: 10 }}

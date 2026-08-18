@@ -9,7 +9,8 @@ import { emptyOrderFilters, isFiltered, orderRangeFilters, type OrderFilters } f
 import { deleteOrders, setOrderAgent, setOrderStatus } from '../lib/mutations';
 import { orderBulk } from '../lib/bulk';
 import { Confirm, ErrorNote } from '../components/Confirm';
-import { OrderDetails, OrderForm } from '../components/orderForms';
+import { OrderDetails } from '../components/orderDetails';
+import { OrderForm } from '../components/orderForms';
 import { Combobox } from '../components/Combobox';
 import { BulkBar } from '../components/BulkBar';
 import { Pagination, quietButton } from '../components/ui';

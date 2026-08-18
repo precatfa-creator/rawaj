@@ -1,4 +1,70 @@
-import React from 'react';
+import React, { useEffect, useRef, useState } from 'react';
+import { Check, Copy } from 'lucide-react';
+
+/**
+ * A short identifier that copies itself when clicked.
+ *
+ * Store codes get read out over the phone and pasted into the linking form, so
+ * the useful action on one is "copy", not "select carefully with the mouse".
+ * The whole thing is the button rather than a separate icon beside it — a
+ * 10-character code is a small target, and the icon doubles as the affordance.
+ *
+ * `navigator.clipboard` is missing on an insecure origin, so failure is a real
+ * state and says so instead of silently doing nothing.
+ */
+export const CopyableCode: React.FC<{
+  value: string;
+  /** `dark` sits on a photo overlay, `light` on a normal surface. */
+  tone?: 'light' | 'dark';
+  className?: string;
+}> = ({ value, tone = 'light', className = '' }) => {
+  const [state, setState] = useState<'idle' | 'copied' | 'failed'>('idle');
+  const timer = useRef<number | undefined>(undefined);
+
+  // The timeout outlives the component when a card unmounts mid-countdown.
+  useEffect(() => () => window.clearTimeout(timer.current), []);
+
+  if (!value) return null;
+
+  const copy = async (event: React.MouseEvent) => {
+    // Card codes sit on top of the button that opens the store; copying the id
+    // must not also navigate into it.
+    event.stopPropagation();
+    event.preventDefault();
+    try {
+      await navigator.clipboard.writeText(value);
+      setState('copied');
+    } catch {
+      setState('failed');
+    }
+    window.clearTimeout(timer.current);
+    timer.current = window.setTimeout(() => setState('idle'), 1800);
+  };
+
+  const tones = tone === 'dark'
+    ? 'text-surface-200 hover:text-white hover:bg-white/15 focus-visible:ring-white/70'
+    : 'text-surface-500 hover:text-primary-800 hover:bg-surface-100 focus-visible:ring-primary-500';
+
+  return (
+    <button
+      type="button"
+      onClick={copy}
+      title={`نسخ ${value}`}
+      aria-label={`نسخ معرّف المتجر ${value}`}
+      className={`inline-flex items-center gap-1.5 rounded-lg px-1.5 py-0.5 -mx-1.5 font-mono text-xs
+        transition-colors focus-visible:outline-none focus-visible:ring-2 ${tones} ${className}`}
+    >
+      <span dir="ltr">{value}</span>
+      {state === 'copied'
+        ? <Check size={13} className="shrink-0 text-emerald-400" />
+        : <Copy size={13} className="shrink-0 opacity-70" />}
+      {/* Announced, and shown, only once there is something to say. */}
+      <span aria-live="polite" className="font-sans font-bold">
+        {state === 'copied' ? 'تم النسخ' : state === 'failed' ? 'تعذر النسخ' : ''}
+      </span>
+    </button>
+  );
+};
 
 /** Page header used by every store page. */
 export const PageHead: React.FC<{ title: string; subtitle: string; children?: React.ReactNode }> = ({

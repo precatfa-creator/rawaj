@@ -13,7 +13,7 @@ const STORE_SECTIONS = [
   'products', 'movements', 'orders', 'customers', 'agents', 'zones', 'finances', 'reports',
   'naming', 'audit', 'permissions',
 ];
-const PORTAL_VIEWS = ['stats', 'stores', 'users', 'audit', 'network', 'doctypes'];
+const PORTAL_VIEWS = ['stats', 'stores', 'users', 'audit', 'network', 'doctypes', 'settings'];
 
 export const DEFAULT_STORE_SECTION = 'products';
 
@@ -26,6 +26,7 @@ export const DEFAULT_STORE_SECTION = 'products';
  *   #/audit       portal, the changes no store owns (admins only)
  *   #/network     portal, linked stores and ownership requests
  *   #/doctypes    portal, global DocType Builder (system admins only)
+ *   #/settings    portal, this user's own preferences
  *   #/store/<id>/orders
    *   #/store/<id>/naming   that store's naming series (admins only)
    *   #/store/<id>/audit    that store's changes (admins only)

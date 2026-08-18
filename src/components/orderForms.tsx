@@ -5,7 +5,6 @@ import { NamingSeriesField } from './forms';
 import { ErrorNote } from './Confirm';
 import { Combobox } from './Combobox';
 import { createOrder, newId, orderTotals, updateOrder } from '../lib/mutations';
-import { statusLabels } from '../lib/dashboardStats';
 import { orderCommission, repCoversZone } from '../lib/commission';
 import { searchOptions } from '../lib/queries';
 import type { Customer, DeliveryZone, Order, OrderItem, Product, SalesRep } from '../types';
@@ -379,70 +378,6 @@ export const OrderForm: React.FC<{
 
         {error && <ErrorNote message={error} />}
       </form>
-    </Modal>
-  );
-};
-
-export const OrderDetails: React.FC<{
-  order: Order | null;
-  salesReps: SalesRep[];
-  zones: DeliveryZone[];
-  onClose: () => void;
-}> = ({ order, salesReps, zones, onClose }) => {
-  const rep = salesReps.find(item => item.id === order?.agentId);
-  const zone = zones.find(item => item.id === order?.zoneId);
-
-  return (
-    <Modal open={!!order} wide title={order ? `الطلب ${order.orderNumber}` : ''} onClose={onClose}>
-      {order && (
-        <div className="space-y-5">
-          <dl className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-sm">
-            {[
-              ['العميل', order.customerName],
-              ['الحالة', statusLabels[order.status]],
-              ['التاريخ', new Date(order.createdAt).toLocaleDateString('ar-LY')],
-              ['المنطقة', zone?.name ?? 'بدون منطقة'],
-              ['المندوب', rep?.name ?? 'بدون مندوب'],
-              ...(rep
-                ? [['عمولة المندوب', `${Math.round(orderCommission(order.deliveryFee, zone, rep.commission)).toLocaleString('en-US')} د.ل`]]
-                : []),
-            ].map(([label, value]) => (
-              <div key={label} className="bg-surface-50 border border-surface-200 rounded-xl p-3">
-                <dt className="text-surface-500 text-xs">{label}</dt>
-                <dd className="font-bold text-surface-900 mt-1">{value}</dd>
-              </div>
-            ))}
-          </dl>
-
-          <ul className="space-y-2">
-            {order.items.map((item, index) => (
-              <li key={`${item.productId}-${item.size ?? ''}-${index}`} className="flex items-center gap-3 border border-surface-200 rounded-xl p-3">
-                {item.image && <img src={item.image} alt="" loading="lazy" className="w-11 h-11 rounded-lg object-cover border border-surface-200" />}
-                <span className="flex-1 font-semibold text-surface-900 truncate">
-                  {item.productName}
-                  {item.size && <span className="text-surface-500 font-medium"> · مقاس {item.size}</span>}
-                </span>
-                <span className="text-sm text-surface-500 tabular-nums">{item.quantity} × {money(item.price)}</span>
-                <span className="font-bold tabular-nums">{money(item.quantity * item.price)}</span>
-              </li>
-            ))}
-          </ul>
-
-          <dl className="bg-surface-50 border border-surface-200 rounded-xl p-4 space-y-1.5 text-sm">
-            <div className="flex justify-between"><dt className="text-surface-500">المجموع الفرعي</dt><dd className="font-bold tabular-nums">{money(order.subtotal)}</dd></div>
-            <div className="flex justify-between"><dt className="text-surface-500">الخصم</dt><dd className="font-bold tabular-nums">−{money(order.discount)}</dd></div>
-            <div className="flex justify-between"><dt className="text-surface-500">التوصيل</dt><dd className="font-bold tabular-nums">{money(order.deliveryFee)}</dd></div>
-            <div className="flex justify-between border-t border-surface-200 pt-1.5 mt-1.5"><dt className="font-bold text-surface-900">الإجمالي</dt><dd className="font-black text-lg tabular-nums">{money(order.total)}</dd></div>
-          </dl>
-
-          {order.notes && (
-            <div>
-              <h3 className="text-sm font-bold text-surface-700 mb-1.5">ملاحظات</h3>
-              <p className="text-surface-700 bg-surface-50 border border-surface-200 rounded-xl p-3">{order.notes}</p>
-            </div>
-          )}
-        </div>
-      )}
     </Modal>
   );
 };
