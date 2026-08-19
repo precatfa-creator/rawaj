@@ -1,6 +1,7 @@
-import React, { useEffect, useState } from 'react';
+import React, { useState } from 'react';
+import { describeActor, useActorNames } from '../lib/actors';
+import { auditChanges, auditSummary } from '../lib/auditText';
 import { ShieldCheck, Info, ChevronDown } from 'lucide-react';
-import { supabase } from '../db/supabase';
 import { PAGE_SIZE, usePagedList } from '../lib/queries';
 import { Combobox } from '../components/Combobox';
 import { Card, DataTable, EmptyState, PageHead, Pagination, Pill, count } from '../components/ui';
@@ -32,6 +33,20 @@ const TABLE_LABELS: Record<string, string> = {
   profiles: 'المستخدمون',
 };
 
+/** What one row of each table is called, for the "أنشأ …" line. */
+const TABLE_RECORDS: Record<string, string> = {
+  stores: 'متجراً',
+  products: 'منتجاً',
+  customers: 'عميلاً',
+  orders: 'طلباً',
+  stock_entries: 'حركة مخزون',
+  sales_reps: 'مندوباً',
+  categories: 'تصنيفاً',
+  delivery_zones: 'منطقة توصيل',
+  document_naming: 'قاعدة تسمية',
+  profiles: 'مستخدماً',
+};
+
 /** Tables that never belong to a store, so a store's filter must not offer them. */
 const GLOBAL_TABLES = ['profiles'];
 
@@ -47,12 +62,6 @@ const ACTION_TONES: Record<AuditRow['action'], string> = {
   DELETE: 'bg-rose-50 text-rose-800 border-rose-200',
 };
 
-const short = (value: unknown): string => {
-  if (value === null || value === undefined) return '—';
-  const text = typeof value === 'object' ? JSON.stringify(value) : String(value);
-  return text.length > 60 ? `${text.slice(0, 60)}…` : text;
-};
-
 interface AuditLogProps extends PagedProps {
   /**
    * The store whose trail this is. `null` is the portal's view: the changes no
@@ -66,7 +75,7 @@ export const AuditLog: React.FC<AuditLogProps> = ({ page, onPage, storeId }) => 
   const [table, setTable] = useState('');
   const [action, setAction] = useState('');
   const [expanded, setExpanded] = useState<number | null>(null);
-  const [actors, setActors] = useState<Map<string, string>>(new Map());
+  const actors = useActorNames();
 
   const list = usePagedList<AuditRow>({
     table: 'audit_log',
@@ -80,23 +89,7 @@ export const AuditLog: React.FC<AuditLogProps> = ({ page, onPage, storeId }) => 
   const tableOptions = Object.entries(TABLE_LABELS)
     .filter(([value]) => (storeId ? !GLOBAL_TABLES.includes(value) : true));
 
-  // Names are resolved at read time; the log stores only the uid, so a deleted
-  // profile still leaves a readable trail.
-  useEffect(() => {
-    void supabase.from('profiles').select('id,display_name,email').then(({ data }) => {
-      setActors(new Map((data ?? []).map(row => [row.id as string, (row.display_name || row.email) as string])));
-    });
-  }, []);
-
-  const describeActor = (row: AuditRow) => {
-    if (row.actorId) return actors.get(row.actorId) ?? 'مستخدم محذوف';
-    if (row.actorRole === 'service_role') return 'خدمة النظام';
-    // `postgres` is the role a migration runs under: `supabase db push` carries
-    // no signed-in user, so these rows are the schema updating itself rather
-    // than anybody working in the app.
-    if (row.actorRole === 'postgres') return 'ترحيل قاعدة البيانات';
-    return row.actorRole || 'غير معروف';
-  };
+  const actorName = (row: AuditRow) => describeActor(row, actors);
 
   return (
     <div className="space-y-6">
@@ -147,19 +140,27 @@ export const AuditLog: React.FC<AuditLogProps> = ({ page, onPage, storeId }) => 
         />
       ) : (
         <Card className="overflow-hidden">
-          <DataTable headers={['الوقت', 'المستخدم', 'الجدول', 'العملية', 'السجل', 'الحقول']}>
-            {list.rows.map(row => (
+          <DataTable headers={['الوقت', 'المستخدم', 'الجدول', 'العملية', 'ما الذي تغيّر', 'التفاصيل']}>
+            {list.rows.map(row => {
+              const changes = auditChanges(row.action, row.data);
+              return (
               <React.Fragment key={row.id}>
                 <tr className="hover:bg-surface-50/60 transition-colors">
                   <td className="px-5 py-3.5 text-surface-600 whitespace-nowrap tabular-nums">
                     {new Date(row.changedAt).toLocaleString('ar-LY')}
                   </td>
-                  <td className="px-5 py-3.5 font-bold text-surface-900">{describeActor(row)}</td>
+                  <td className="px-5 py-3.5 font-bold text-surface-900">{actorName(row)}</td>
                   <td className="px-5 py-3.5 text-surface-700">{TABLE_LABELS[row.tableName] ?? row.tableName}</td>
                   <td className="px-5 py-3.5">
                     <Pill tone={ACTION_TONES[row.action]}>{ACTION_LABELS[row.action]}</Pill>
                   </td>
-                  <td className="px-5 py-3.5 text-surface-500 text-xs" dir="ltr">{row.recordId || '—'}</td>
+                  {/* The sentence, not the column names: this is the cell
+                      somebody actually reads the log for. */}
+                  <td className="px-5 py-3.5 text-surface-800 max-w-96">
+                    <span className="block truncate" title={auditSummary(row.action, changes, TABLE_RECORDS[row.tableName] ?? 'السجل')}>
+                      {auditSummary(row.action, changes, TABLE_RECORDS[row.tableName] ?? 'السجل')}
+                    </span>
+                  </td>
                   <td className="px-5 py-3.5">
                     <button
                       type="button"
@@ -167,7 +168,7 @@ export const AuditLog: React.FC<AuditLogProps> = ({ page, onPage, storeId }) => 
                       aria-expanded={expanded === row.id}
                       className="inline-flex items-center gap-1.5 text-sm font-bold text-primary-800 hover:text-primary-900 rounded-lg px-2 py-1 -mx-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500"
                     >
-                      {count(row.changedFields.length)} حقل
+                      {count(changes.length)} حقل
                       <ChevronDown size={15} className={`transition-transform ${expanded === row.id ? 'rotate-180' : ''}`} />
                     </button>
                   </td>
@@ -178,31 +179,32 @@ export const AuditLog: React.FC<AuditLogProps> = ({ page, onPage, storeId }) => 
                       <div className="rounded-xl border border-surface-200 bg-white overflow-hidden">
                         <table className="w-full text-xs">
                           <tbody className="divide-y divide-surface-200/70">
-                            {row.action === 'UPDATE'
-                              ? Object.entries(row.data as Record<string, { from: unknown; to: unknown }>).map(([field, change]) => (
-                                  <tr key={field}>
-                                    <td className="px-3 py-2 font-bold text-surface-700 w-40">{field}</td>
-                                    <td className="px-3 py-2 text-rose-800 line-through" dir="auto">{short(change?.from)}</td>
-                                    <td className="px-3 py-2 text-emerald-800 font-bold" dir="auto">{short(change?.to)}</td>
-                                  </tr>
-                                ))
-                              : Object.entries(row.data).map(([field, value]) => (
-                                  <tr key={field}>
-                                    <td className="px-3 py-2 font-bold text-surface-700 w-40">{field}</td>
-                                    <td className="px-3 py-2 text-surface-700" colSpan={2} dir="auto">{short(value)}</td>
-                                  </tr>
-                                ))}
+                            {changes.map(change => (
+                              <tr key={change.field}>
+                                <td className="px-3 py-2 font-bold text-surface-700 w-40">{change.label}</td>
+                                {change.from === null ? (
+                                  <td className="px-3 py-2 text-surface-700" colSpan={2} dir="auto">{change.to}</td>
+                                ) : (
+                                  <>
+                                    <td className="px-3 py-2 text-surface-400 line-through" dir="auto">{change.from}</td>
+                                    <td className="px-3 py-2 text-surface-900 font-bold" dir="auto">{change.to}</td>
+                                  </>
+                                )}
+                              </tr>
+                            ))}
                           </tbody>
                         </table>
                       </div>
                       <p className="text-xs text-surface-500 mt-2">
-                        معرّف المعاملة: <span dir="ltr" className="tabular-nums">{row.txid}</span> — العمليات التي تحمل نفس المعرّف حدثت معاً.
+                        السجل <span dir="ltr" className="tabular-nums">{row.recordId || '—'}</span> · معرّف المعاملة:{' '}
+                        <span dir="ltr" className="tabular-nums">{row.txid}</span> — العمليات التي تحمل نفس المعرّف حدثت معاً.
                       </p>
                     </td>
                   </tr>
                 )}
               </React.Fragment>
-            ))}
+              );
+            })}
           </DataTable>
           <Pagination page={page} total={list.total} pageSize={PAGE_SIZE} onPage={onPage} loading={list.loading} />
         </Card>

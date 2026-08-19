@@ -1,5 +1,6 @@
 import React, { lazy, Suspense, useCallback, useEffect, useState } from 'react';
 import type { Session } from '@supabase/supabase-js';
+import { MotionConfig } from 'motion/react';
 import { AppProvider, useAppStore } from './store';
 import { MainLayout } from './layouts/MainLayout';
 import { Portal, type PortalTab } from './pages/Portal';
@@ -22,7 +23,7 @@ import { isSupabaseConfigured, supabase } from './db/supabase';
 import { DEFAULT_STORE_SECTION, useRoute } from './lib/route';
 import type { Profile } from './types';
 /**
- * Admin-only, and it drags in the Markdown renderer plus the Puter SDK loader.
+ * Admin-only, and it drags in the Markdown renderer plus the assistant UI.
  * Lazy so the ~165 kB never reaches the users who cannot open it, and Suspense
  * renders nothing while it arrives — the launcher is a floating button, so
  * there is no layout to hold open.
@@ -90,16 +91,30 @@ const Workspace: React.FC<{ profile: Profile }> = ({ profile }) => {
   }
 
   // The list page lives in the URL, so a page is linkable and survives refresh.
+  // Paging keeps whatever filters the page put there; only the offset moves.
   const paging = {
     page: route.page,
-    onPage: (page: number) => navigate({ view: route.view, storeId: store?.id ?? null, page }),
+    onPage: (page: number) =>
+      navigate({ view: route.view, storeId: store?.id ?? null, params: route.params, page }),
   };
 
   const renderContent = () => {
     switch (route.view) {
       case 'products': return <Products {...paging} />;
       case 'movements': return <StockMovements {...paging} />;
-      case 'orders': return <Orders {...paging} />;
+      case 'orders': return (
+        <Orders
+          {...paging}
+          recordId={route.recordId ?? null}
+          onRecord={id => navigate({
+            view: route.view, storeId: store.id, recordId: id, params: route.params, page: route.page,
+          })}
+          params={route.params ?? {}}
+          // A different filter set is a different list, so the offset goes back
+          // to the first page with it.
+          onParams={params => navigate({ view: route.view, storeId: store.id, params, page: 0 })}
+        />
+      );
       case 'customers': return <Customers {...paging} />;
       case 'zones': return <Zones />;
       case 'finances': return <Finances />;
@@ -214,7 +229,10 @@ const AppContent: React.FC = () => {
 
   return (
     <AppProvider>
-      <Workspace profile={profile} />
+      {/* Every animation in the app reads the OS setting through this. */}
+      <MotionConfig reducedMotion="user">
+        <Workspace profile={profile} />
+      </MotionConfig>
     </AppProvider>
   );
 };

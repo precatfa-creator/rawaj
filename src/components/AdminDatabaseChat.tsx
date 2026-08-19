@@ -1,5 +1,4 @@
 import React, { FormEvent, useEffect, useMemo, useRef, useState } from 'react';
-import type { ChatOptions, ChatResponse, Puter } from '@heyputer/puter.js';
 import {
   Bot,
   Database,
@@ -14,7 +13,8 @@ import {
 } from 'lucide-react';
 import { supabase } from '../db/supabase';
 import {
-  asPayload, toChatMessage, toOutgoing, toToolResult, type OutgoingMessage,
+  toChatMessage, toOutgoing, toToolResult, type ChatCompletionResponse,
+  type ChatToolCall, type OutgoingMessage,
 } from '../lib/chatMessages';
 import { Markdown } from './Markdown';
 import type { Store } from '../types';
@@ -32,7 +32,7 @@ type QueryArgs = {
   months?: number;
 };
 
-type ToolCall = NonNullable<NonNullable<ChatResponse['message']>['tool_calls']>[number];
+type ToolCall = ChatToolCall;
 
 /**
  * Panel sizes. A ranked report with five columns is unreadable in a 390px
@@ -62,48 +62,6 @@ const readStoredSize = (): PanelSize => {
   return SIZE_ORDER.includes(stored as PanelSize) ? (stored as PanelSize) : 'normal';
 };
 
-/**
- * The assistant plans tool calls and reads reports back as Arabic prose, which
- * a nano model does adequately and a full one does noticeably better. Puter
- * bills the signed-in administrator, not the project, so the cost of the
- * upgrade lands with whoever chose to ask the question.
- *
- * VITE_ vars are inlined at build time, so the default matters: a deployment
- * built without the override silently falls back to whatever is written here.
- */
-const MODEL = import.meta.env.VITE_PUTER_MODEL?.trim() || 'openai/gpt-5.6-sol';
-
-/**
- * `reasoning_effort` and `verbosity` are OpenAI-only, so an override pointing at
- * Claude or Gemini must not receive them. Matches `openai/gpt-5.6-sol`,
- * `azure:openai/gpt-5.4`, `openrouter:openai/gpt-5.6-sol-pro`, and plain
- * `gpt-5-nano`, while leaving `anthropic:claude-*` alone.
- */
-const IS_OPENAI_MODEL = /(^|[:/])(openai|gpt-)/i.test(MODEL);
-
-/**
- * Request options, built once from the model rather than hardcoded.
- *
- * Reasoning models reject `temperature` outright — 400 "Unsupported parameter:
- * 'temperature' is not supported with this model". Puter's documented steering
- * for them is `reasoning_effort` and `verbosity` instead, and omitting any
- * option makes Puter fall back to that model's own default, so sending less is
- * always safe.
- *
- * `low` effort on both counts: choosing among nine enumerated reports and
- * reading the rows back is not deep reasoning, and the admin pays per call.
- *
- * The token ceiling is generous because reasoning tokens are billed against the
- * same budget as the reply — the old 900 would have been spent thinking, and
- * truncated the Arabic answer mid-sentence.
- */
-const CHAT_OPTIONS: ChatOptions = {
-  model: MODEL,
-  max_tokens: 4000,
-  ...(IS_OPENAI_MODEL
-    ? { reasoning_effort: 'low', verbosity: 'low' }
-    : { temperature: 0.2 }),
-};
 const MAX_TOOL_ROUNDS = 4;
 const MAX_HISTORY_MESSAGES = 18;
 
@@ -119,43 +77,6 @@ const REPORTS = [
   'recent_orders',
 ] as const;
 
-const DATABASE_TOOL: NonNullable<ChatOptions['tools']>[number] = {
-  type: 'function',
-  function: {
-    name: 'query_business_data',
-    description:
-      'Read a safe, aggregate report from the live Rawaj database. Use this before making any claim about business data. It never returns contact details, addresses, notes, credentials, or arbitrary SQL results.',
-    parameters: {
-      type: 'object',
-      properties: {
-        report: {
-          type: 'string',
-          enum: REPORTS,
-          description: 'The report to retrieve.',
-        },
-        store_id: {
-          type: ['string', 'null'],
-          description: 'Exact store ID from the supplied store list, or null for all stores.',
-        },
-        limit: {
-          type: 'integer',
-          minimum: 1,
-          maximum: 20,
-          description: 'Maximum rows for ranked and recent reports. Defaults to 10.',
-        },
-        months: {
-          type: 'integer',
-          minimum: 1,
-          maximum: 12,
-          description: 'Number of months for monthly_sales. Defaults to 6.',
-        },
-      },
-      required: ['report'],
-      additionalProperties: false,
-    },
-  },
-};
-
 // Same generator the rest of the app uses; these only key React lists.
 const newId = () => crypto.randomUUID();
 
@@ -163,7 +84,7 @@ const initialMessage = (activeStoreName?: string): DisplayMessage => ({
   id: newId(),
   role: 'assistant',
   content: activeStoreName
-    ? `مرحباً! أنا مساعد بيانات السستم. اسألني عن أداء ${activeStoreName}، المبيعات، المخزون، الطلبات أو العملاء.`
+    ? `مرحباً! أنا العبسي، مساعد بيانات السستم. اسألني عن أداء ${activeStoreName}، المبيعات، المخزون، الطلبات أو العملاء.`
     : 'مرحباً! أنا مساعد بيانات السستم. اسألني عن المبيعات، الأرباح، المخزون، الطلبات أو أداء المتاجر.',
 });
 
@@ -186,18 +107,33 @@ const asText = (content: unknown): string => {
   return '';
 };
 
+const callGlm = async (messages: OutgoingMessage[], useTools: boolean): Promise<ChatCompletionResponse> => {
+  const { data, error } = await supabase.functions.invoke<ChatCompletionResponse>('admin-ai-chat', {
+    body: { messages, use_tools: useTools },
+  });
+  if (error) {
+    const context = 'context' in error && error.context instanceof Response ? error.context : null;
+    const detail = context
+      ? await context.clone().json().catch(() => null) as { provider_code?: string } | null
+      : null;
+    if (detail?.provider_code === '1305') throw new Error('ZAI_OVERLOADED');
+    throw error;
+  }
+  if (!data?.choices?.length) throw new Error('Invalid AI response');
+  return data;
+};
+
 const errorText = (error: unknown) => {
   if (error && typeof error === 'object') {
-    if ('error' in error && error.error === 'popup_blocked') {
-      return 'حظر المتصفح نافذة تسجيل Puter. اسمح بالنوافذ المنبثقة ثم حاول مرة أخرى.';
+    if ('message' in error && error.message === 'ZAI_OVERLOADED') {
+      return 'خدمة GLM مزدحمة مؤقتاً. انتظر لحظات ثم حاول مرة أخرى.';
     }
-    if ('error' in error && error.error === 'auth_window_closed') {
-      return 'أُغلقت نافذة Puter قبل إكمال تسجيل الدخول.';
+    if ('message' in error && typeof error.message === 'string'
+      && error.message.includes('Failed to send a request')) {
+      return 'تعذر الوصول إلى خدمة الذكاء الاصطناعي. تحقق من اتصال الشبكة ثم حاول مرة أخرى.';
     }
-    if ('msg' in error && typeof error.msg === 'string') return error.msg;
-    if ('message' in error && typeof error.message === 'string') return error.message;
   }
-  return 'تعذر الاتصال بالمساعد. حاول مرة أخرى.';
+  return 'تعذر الاتصال بمساعد GLM. حاول مرة أخرى أو راجع إعداد مفتاح Z.AI.';
 };
 
 const runDatabaseTool = async (toolCall: ToolCall) => {
@@ -264,11 +200,9 @@ export const AdminDatabaseChat: React.FC<AdminDatabaseChatProps> = ({ stores, ac
   const [input, setInput] = useState('');
   const [isSending, setIsSending] = useState(false);
   const [size, setSize] = useState<PanelSize>(readStoredSize);
-  const [puterStatus, setPuterStatus] = useState<'idle' | 'loading' | 'ready' | 'error'>('idle');
   const [messages, setMessages] = useState<DisplayMessage[]>(() => [initialMessage(activeStoreName)]);
   const endRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
-  const puterRef = useRef<Puter | null>(null);
   const systemPrompt = useMemo(
     () => buildSystemPrompt(stores, activeStoreId),
     [stores, activeStoreId],
@@ -287,23 +221,6 @@ export const AdminDatabaseChat: React.FC<AdminDatabaseChatProps> = ({ stores, ac
     document.addEventListener('keydown', onKeyDown);
     window.setTimeout(() => inputRef.current?.focus(), 0);
     return () => document.removeEventListener('keydown', onKeyDown);
-  }, [isOpen]);
-
-  useEffect(() => {
-    if (!isOpen || puterRef.current) return;
-    let active = true;
-    setPuterStatus('loading');
-    void import('@heyputer/puter.js')
-      .then(({ puter }) => {
-        if (!active) return;
-        puterRef.current = puter;
-        setPuterStatus('ready');
-      })
-      .catch(error => {
-        console.error('Failed to load Puter.js', error);
-        if (active) setPuterStatus('error');
-      });
-    return () => { active = false; };
   }, [isOpen]);
 
   const cycleSize = () => {
@@ -328,7 +245,7 @@ export const AdminDatabaseChat: React.FC<AdminDatabaseChatProps> = ({ stores, ac
   const sendMessage = async (event: FormEvent) => {
     event.preventDefault();
     const question = input.trim();
-    if (!question || isSending || !puterRef.current) return;
+    if (!question || isSending) return;
 
     const userMessage: DisplayMessage = { id: newId(), role: 'user', content: question };
     const nextDisplay = [...messages, userMessage];
@@ -337,26 +254,17 @@ export const AdminDatabaseChat: React.FC<AdminDatabaseChatProps> = ({ stores, ac
     setIsSending(true);
 
     try {
-      const puter = puterRef.current;
-      if (!puter.auth.isSignedIn()) {
-        // This is invoked synchronously from submit so browsers allow its popup.
-        await puter.auth.signIn();
-      }
-
       const recentHistory = nextDisplay.slice(-MAX_HISTORY_MESSAGES);
       const requestMessages: OutgoingMessage[] = [
         toChatMessage('system', systemPrompt),
         ...recentHistory.map(message => toChatMessage(message.role, message.content)),
       ];
 
-      let response: ChatResponse | null = null;
+      let response: ChatCompletionResponse | null = null;
       for (let round = 0; round < MAX_TOOL_ROUNDS; round += 1) {
-        response = await puter.ai.chat(asPayload(requestMessages), {
-          ...CHAT_OPTIONS,
-          tools: [DATABASE_TOOL],
-        }) as ChatResponse;
+        response = await callGlm(requestMessages, true);
 
-        const assistantMessage = response.message;
+        const assistantMessage = response.choices?.[0]?.message;
         const toolCalls = assistantMessage?.tool_calls ?? [];
         if (!assistantMessage || toolCalls.length === 0) break;
 
@@ -372,12 +280,12 @@ export const AdminDatabaseChat: React.FC<AdminDatabaseChatProps> = ({ stores, ac
       // its last turn unanswered and its content empty. One more call with no
       // tools offered forces it to answer from what it already has, instead of
       // the user getting a generic apology after four successful queries.
-      if (response?.message?.tool_calls?.length) {
+      if (response?.choices?.[0]?.message?.tool_calls?.length) {
         // No tools offered, so the model has to answer from what it gathered.
-        response = await puter.ai.chat(asPayload(requestMessages), CHAT_OPTIONS) as ChatResponse;
+        response = await callGlm(requestMessages, false);
       }
 
-      const answer = asText(response?.message?.content);
+      const answer = asText(response?.choices?.[0]?.message?.content);
       setMessages(current => [
         ...current,
         {
@@ -387,7 +295,7 @@ export const AdminDatabaseChat: React.FC<AdminDatabaseChatProps> = ({ stores, ac
         },
       ]);
     } catch (error) {
-      console.error('Puter assistant failed', error);
+      console.error('GLM assistant failed', error);
       setMessages(current => [
         ...current,
         { id: newId(), role: 'assistant', content: errorText(error) },
@@ -411,11 +319,10 @@ export const AdminDatabaseChat: React.FC<AdminDatabaseChatProps> = ({ stores, ac
               <Bot size={22} />
             </div>
             <div className="min-w-0 flex-1">
-              <h2 className="truncate font-black">مساعد بيانات السستم</h2>
+              <h2 className="truncate font-black"> العبسي </h2>
               <p className="flex items-center gap-1 text-xs text-primary-100">
                 <ShieldCheck size={13} />
-                للمدير فقط · قراءة فقط · يُرسل البيانات لمزوّد خارجي
-              </p>
+للأعضاء المميّزين              </p>
             </div>
             <button
               type="button"
@@ -501,18 +408,14 @@ export const AdminDatabaseChat: React.FC<AdminDatabaseChatProps> = ({ stores, ac
                 }}
                 rows={1}
                 maxLength={800}
-                disabled={isSending || puterStatus !== 'ready'}
-                placeholder={puterStatus === 'error'
-                  ? 'تعذر تحميل Puter. أغلق المساعد وافتحه مجدداً.'
-                  : puterStatus !== 'ready'
-                    ? 'جارٍ تجهيز Puter…'
-                    : 'اسأل عن المبيعات أو المخزون…'}
+                disabled={isSending}
+                placeholder="اسأل عن المبيعات أو المخزون…"
                 aria-label="رسالتك"
                 className="max-h-28 min-h-10 flex-1 resize-none bg-transparent px-2 py-2 text-sm text-surface-900 outline-none placeholder:text-surface-400 disabled:opacity-60"
               />
               <button
                 type="submit"
-                disabled={!input.trim() || isSending || puterStatus !== 'ready'}
+                disabled={!input.trim() || isSending}
                 className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-primary-700 text-white transition-colors hover:bg-primary-800 disabled:cursor-not-allowed disabled:opacity-40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 focus-visible:ring-offset-2"
                 aria-label="إرسال"
               >
@@ -523,9 +426,7 @@ export const AdminDatabaseChat: React.FC<AdminDatabaseChatProps> = ({ stores, ac
                 incomplete. Sales figures and customer names do leave the
                 system, and the admin deciding to use this deserves to know
                 that, not just what is withheld. */}
-            <p className="mt-2 text-center text-[11px] leading-4 text-surface-400">
-              تُرسَل أرقام المبيعات وأسماء العملاء إلى Puter ومزوّد الذكاء الاصطناعي لديه.
-              لا تُرسَل أرقام الهاتف أو العناوين أو الملاحظات، ولا يمكن للمساعد تعديل أي بيانات.
+            <p className="mt-2 text-center text-[11px] leading-4 text-surface-400">تحقّق دائمًا من المعلومات المهمة.
             </p>
           </form>
         </section>

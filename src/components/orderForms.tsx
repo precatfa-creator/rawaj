@@ -1,15 +1,14 @@
-import React, { FormEvent, useState } from 'react';
+import React, { FormEvent, useRef, useState } from 'react';
+import { money } from './ui';
 import { Trash2 } from 'lucide-react';
 import { Field, Modal, fieldClass, ghostButton, primaryButton } from './Modal';
-import { NamingSeriesField } from './forms';
+import { CustomerForm, NamingSeriesField } from './forms';
 import { ErrorNote } from './Confirm';
 import { Combobox } from './Combobox';
 import { createOrder, newId, orderTotals, updateOrder } from '../lib/mutations';
 import { orderCommission, repCoversZone } from '../lib/commission';
 import { searchOptions } from '../lib/queries';
 import type { Customer, DeliveryZone, Order, OrderItem, Product, SalesRep } from '../types';
-
-const money = (value: number) => `${Math.round(value).toLocaleString('en-US')} د.ل`;
 
 /** Identifies a line: the same product in two sizes is two lines, not one. */
 const lineKey = (item: Pick<OrderItem, 'productId' | 'size'>) => `${item.productId}::${item.size ?? ''}`;
@@ -48,6 +47,11 @@ export const OrderForm: React.FC<{
   const [namingSeries, setNamingSeries] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
+  const [newCustomerName, setNewCustomerName] = useState<string | null>(null);
+  const customerResolver = useRef<((customerId: string | null) => void) | null>(null);
+  // Realtime will add a saved customer to `customers`, but the picker must be
+  // able to select it before that round trip finishes.
+  const createdCustomer = useRef<Pick<Customer, 'id' | 'name' | 'city'> | null>(null);
   /**
    * Sizes offered per product, collected as products are picked. The picker can
    * return a product from outside the preloaded slice, so its sizes are not
@@ -78,9 +82,54 @@ export const OrderForm: React.FC<{
   }
   if (!open && seeded !== null) setSeeded(null);
 
+  // Closing a half-filled order by clicking the backdrop is the one way to lose
+  // work in this dialog, so it asks first.
+  const dirty =
+    customerId !== (order?.customerId ?? '')
+    || customerName !== (order?.customerName ?? '')
+    || discount !== (order?.discount ?? 0)
+    || deliveryFee !== (order?.deliveryFee ?? 0)
+    || notes !== (order?.notes ?? '')
+    || zoneId !== (order?.zoneId ?? '')
+    || agentId !== (order?.agentId ?? '')
+    || JSON.stringify(items) !== JSON.stringify(order?.items ?? []);
+
+  const requestClose = () => {
+    if (dirty && !window.confirm('هناك تغييرات لم تُحفظ. إغلاق الطلب دون حفظ؟')) return;
+    onClose();
+  };
+
   const { subtotal, total } = orderTotals(items, discount, deliveryFee);
-  const customer = customers.find(c => c.id === customerId);
+  const customer = customers.find(c => c.id === customerId)
+    ?? (createdCustomer.current?.id === customerId ? createdCustomer.current : undefined);
   const zone = zones.find(z => z.id === zoneId);
+
+  const applyCustomerZone = (city: string) => {
+    // The area first, then the city it sits in — a customer who wrote
+    // «طرابلس» rather than a neighbourhood still gets a fee.
+    const match = zones.find(z => z.active && z.name === city)
+      ?? zones.find(z => z.active && z.city === city);
+    if (match) { setZoneId(match.id); setDeliveryFee(match.fee); }
+  };
+
+  /** Keeps the combobox waiting while the full customer dialog is on top. */
+  const openCustomerForm = (term: string) =>
+    new Promise<string | null>(resolve => {
+      customerResolver.current = resolve;
+      setNewCustomerName(term);
+    });
+
+  const settleCustomerForm = (created: Pick<Customer, 'id' | 'name' | 'city'> | null) => {
+    if (created) {
+      createdCustomer.current = created;
+      setCustomerId(created.id);
+      setCustomerName(created.name);
+      applyCustomerZone(created.city);
+    }
+    customerResolver.current?.(created?.id ?? null);
+    customerResolver.current = null;
+    setNewCustomerName(null);
+  };
 
   // Reps covering the chosen zone come first; a rep with no zones covers all of
   // them, and the rest stay selectable rather than disappearing.
@@ -174,19 +223,20 @@ export const OrderForm: React.FC<{
   };
 
   return (
-    <Modal
+    <>
+      <Modal
       open={open}
       wide
       title={isEdit ? `تعديل الطلب ${order.orderNumber}` : 'طلب جديد'}
-      onClose={onClose}
+      onClose={requestClose}
       footer={
         <>
           <button type="submit" form="order-form" disabled={busy} className={primaryButton}>
             {busy
-              ? 'جارٍ الحفظ...'
+              ? 'جارٍ الحفظ…'
               : `${isEdit ? 'حفظ التعديلات' : 'إنشاء الطلب'} · ${money(total)}`}
           </button>
-          <button type="button" onClick={onClose} className={ghostButton}>إلغاء</button>
+          <button type="button" onClick={requestClose} className={ghostButton}>إلغاء</button>
         </>
       }
     >
@@ -214,14 +264,10 @@ export const OrderForm: React.FC<{
           value={customerId}
           onChange={value => {
             setCustomerId(value);
-            const picked = customers.find(c => c.id === value);
+            const picked = customers.find(c => c.id === value)
+              ?? (createdCustomer.current?.id === value ? createdCustomer.current : undefined);
             setCustomerName(picked?.name ?? '');
-            // Prefill the fee from the customer's city when it maps to a zone.
-            // The area first, then the city it sits in — a customer who wrote
-            // «طرابلس» rather than a neighbourhood still gets a fee.
-            const match = zones.find(z => z.active && z.name === picked?.city)
-              ?? zones.find(z => z.active && z.city === picked?.city);
-            if (match) { setZoneId(match.id); setDeliveryFee(match.fee); }
+            if (picked) applyCustomerZone(picked.city);
           }}
           // The order being edited may belong to a customer outside the preloaded
           // slice; without their own option the field would read as "اختر عميلاً"
@@ -236,6 +282,8 @@ export const OrderForm: React.FC<{
           // order can only be for a customer of the store it belongs to.
           onSearch={async term => (await searchOptions('customers', 'id,name,city', term, {}, 30, { store_id: customerStoreIds }))
             .map(row => ({ value: row.id as string, label: row.name as string, hint: (row.city as string) || 'بدون مدينة' }))}
+          onCreate={isEdit ? undefined : openCustomerForm}
+          createLabel={term => `إنشاء عميل جديد باسم "${term}"`}
           placeholder="اختر عميلاً"
         />
 
@@ -378,6 +426,15 @@ export const OrderForm: React.FC<{
 
         {error && <ErrorNote message={error} />}
       </form>
-    </Modal>
+      </Modal>
+      <CustomerForm
+        open={!isEdit && newCustomerName !== null}
+        customer={null}
+        initialName={newCustomerName ?? ''}
+        storeId={storeId}
+        onCreated={settleCustomerForm}
+        onClose={() => settleCustomerForm(null)}
+      />
+    </>
   );
 };

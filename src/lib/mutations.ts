@@ -521,9 +521,49 @@ export const deleteZone = async (zone: DeliveryZone, storeId: string | null): Pr
   );
 };
 
-export const setOrderStatus = (ids: string[], status: OrderStatus) =>
+export interface OrderStatusRow {
+  id: string;
+  status: OrderStatus;
+  statusReason: string;
+}
+
+/**
+ * What the statuses were, read before a bulk change writes over them.
+ *
+ * This is what makes "undo" honest: restoring 200 orders to one status would be
+ * a second mistake, because they did not all start there. The reason travels
+ * with the status for the same reason — putting an order back to `returned`
+ * without the note explaining the return only half restores it.
+ */
+export const orderStatusesOf = async (ids: string[]): Promise<OrderStatusRow[]> => {
+  const { data, error } = await supabase.from('orders').select('id,status,statusReason:status_reason').in('id', ids);
+  if (error) { console.error('failed to read order statuses', error); return []; }
+  return (data ?? []) as OrderStatusRow[];
+};
+
+/** One update per distinct previous status and reason, restoring both. */
+export const restoreOrderStatuses = async (previous: OrderStatusRow[]): Promise<WriteResult> => {
+  const groups = new Map<string, string[]>();
+  previous.forEach(row => {
+    const key = JSON.stringify([row.status, row.statusReason ?? '']);
+    groups.set(key, [...(groups.get(key) ?? []), row.id]);
+  });
+  for (const [key, ids] of groups) {
+    const [status, reason] = JSON.parse(key) as [OrderStatus, string];
+    const result = await setOrderStatus(ids, status, reason);
+    if (!result.ok) return result;
+  }
+  return ok;
+};
+
+/**
+ * `reason` is what the operator typed when cancelling or returning. Every other
+ * status clears it: a reason left behind from an earlier cancellation would
+ * read as the reason for the state the order is in now.
+ */
+export const setOrderStatus = (ids: string[], status: OrderStatus, reason = '') =>
   run(
-    supabase.from('orders').update({ status }).in('id', ids),
+    supabase.from('orders').update({ status, status_reason: reason }).in('id', ids),
     ids.length > 1 ? 'تعذر تحديث حالة الطلبات.' : 'تعذر تحديث حالة الطلب.',
   );
 

@@ -20,10 +20,13 @@ Prerequisites: Node.js, a Supabase project, and the Supabase CLI.
    supabase db push
    ```
 
-3. Deploy the protected function used by the admin panel:
+3. Store the Z.AI key as an Edge Function secret and deploy the protected
+   functions used by the admin panel:
 
    ```bash
+   supabase secrets set ZAI_API_KEY=YOUR_ZAI_API_KEY
    supabase functions deploy admin-users
+   supabase functions deploy admin-ai-chat
    ```
 
 4. Create or update the initial administrator. Keep the password in your shell/environment and never commit it:
@@ -83,7 +86,7 @@ Rows written by `supabase db push` are attributed to **ترحيل قاعدة ا�
 
 ## Administrator data assistant
 
-Administrators see an **اسأل البيانات** widget on the portal and inside each store. The AI runs through [Puter.js](https://docs.puter.com/AI/chat/), so there is no developer API key. On first use, Puter opens its sign-in window; under Puter's [user-pays model](https://docs.puter.com/user-pays-model/), each administrator's Puter account covers that administrator's AI usage.
+Administrators see an **اسأل البيانات** widget on the portal and inside each store. It uses [GLM‑4.7 Flash](https://docs.z.ai/guides/llm/glm-4.7#glm-4-7-flash) through Z.AI's [OpenAI-compatible chat completions API](https://docs.z.ai/api-reference/llm/chat-completion). The browser calls the protected `admin-ai-chat` Edge Function; the Z.AI key stays in Supabase secrets and is never included in the Vite bundle.
 
 The assistant becomes operational after `supabase db push` applies `20260812000000_admin_database_chat.sql`. The migration exposes a read-only `admin_chat_data` RPC that:
 
@@ -93,7 +96,7 @@ The assistant becomes operational after `supabase db push` applies `202608120000
 - excludes phone numbers, WhatsApp numbers, addresses, order notes, and credentials;
 - cannot insert, update, or delete records.
 
-The default model is `openai/gpt-5.4-nano`. To select another Puter model without changing code, set `VITE_PUTER_MODEL` before building the frontend.
+The Edge Function fixes the model to `glm-4.7-flash`, caps responses at 4,000 tokens, and exposes only the assistant's predefined report tool. It independently verifies that every caller is an active administrator before forwarding a request.
 
 ## Stores, DocTypes, and permissions
 
@@ -112,7 +115,8 @@ The **منشئ DocType** is available to system administrators from the portal. 
 - `VITE_SUPABASE_ANON_KEY` is intended for the browser and is restricted by Row Level Security.
 - `SUPABASE_SERVICE_ROLE_KEY` bypasses RLS. It is only used by the bootstrap script and Supabase's server-side Edge Function environment.
 - Do not expose the service-role key or administrator password through a `VITE_` variable.
-- Business report results and the administrator's prompts are sent to Puter and the selected AI provider to produce answers. Do not use the assistant for secrets or data outside its predefined reports.
+- `ZAI_API_KEY` is a server-side Edge Function secret. Never expose it through a `VITE_` variable or commit it to an environment file.
+- Business report results and the administrator's prompts are sent to Z.AI to produce answers. Do not use the assistant for secrets or data outside its predefined reports.
 
 ## Installable app (PWA)
 

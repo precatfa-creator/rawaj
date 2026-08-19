@@ -202,7 +202,7 @@ export const Portal: React.FC<PortalProps> = ({
                     aria-selected={selected}
                     aria-controls={`portal-panel-${item.id}`}
                     onClick={() => onTabChange(item.id)}
-                    className={`relative inline-flex items-center justify-center gap-2 min-h-11 px-4 rounded-xl font-bold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 focus-visible:ring-offset-2 ${
+                    className={`relative inline-flex cursor-pointer items-center justify-center gap-2 min-h-11 px-4 rounded-xl font-bold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 focus-visible:ring-offset-2 ${
                       selected ? 'text-primary-800' : 'text-surface-600 hover:text-surface-900'
                     }`}
                   >

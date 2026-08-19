@@ -1,6 +1,6 @@
 // Run with: npx tsx src/lib/orderFilters.check.ts
 import assert from 'node:assert/strict';
-import { dayEnd, dayStart, emptyOrderFilters, isFiltered, orderRangeFilters, orderTotalsArgs } from './orderFilters';
+import { filterParams, filtersFromParams, dayEnd, dayStart, emptyOrderFilters, isFiltered, orderRangeFilters, orderTotalsArgs } from './orderFilters';
 
 const base = emptyOrderFilters('store-1');
 
@@ -35,5 +35,17 @@ assert.equal(args.p_status, null);
 // is generated there.
 assert.equal(orderTotalsArgs({ ...base, search: 'أحمد' }).p_search, 'احمد');
 assert.equal(orderTotalsArgs(base).p_search, null);
+
+
+// Filters survive the round trip through the URL, and empty ones leave no key.
+{
+  const filters = { ...emptyOrderFilters('s1'), status: 'shipped', agentId: 'a1', search: 'علي', minTotal: '50' };
+  const params = filterParams(filters);
+  assert.deepEqual(params, { status: 'shipped', agent: 'a1', q: 'علي', min: '50' });
+  assert.deepEqual(filtersFromParams(params, 's1'), filters);
+  assert.deepEqual(filterParams(emptyOrderFilters('s1')), {});
+  // A parameter the page does not own is ignored rather than copied in.
+  assert.deepEqual(filtersFromParams({ nonsense: 'x' }, 's1'), emptyOrderFilters('s1'));
+}
 
 console.log('orderFilters.ts: all checks passed');

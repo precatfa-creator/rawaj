@@ -44,7 +44,7 @@ export const Modal: React.FC<ModalProps> = ({
       onCancel={event => { event.preventDefault(); onClose(); }}
       onClick={event => { if (event.target === ref.current) onClose(); }}
       /* m-auto restores the centering that Tailwind's preflight strips off <dialog>. */
-      className={`m-auto p-0 border border-surface-200 bg-white text-surface-900 shadow-2xl
+      className={`m-auto p-0 border border-surface-200 bg-white text-surface-900 shadow-2xl overscroll-contain
         backdrop:bg-surface-900/40 backdrop:backdrop-blur-sm open:flex open:flex-col ${
         fullscreen
           ? 'w-screen max-w-none h-dvh max-h-dvh rounded-none'
@@ -77,7 +77,7 @@ export const Modal: React.FC<ModalProps> = ({
         </div>
       </div>
 
-      <div className="p-5 overflow-y-auto flex-1">{children}</div>
+      <div className="p-5 overflow-y-auto overscroll-contain flex-1">{children}</div>
 
       {footer && (
         <div className="p-5 border-t border-surface-200 flex flex-wrap gap-3 justify-start shrink-0">

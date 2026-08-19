@@ -97,7 +97,7 @@ export const StockForm: React.FC<{
       footer={
         <>
           <button type="submit" form="stock-form" disabled={busy} className={primaryButton}>
-            {busy ? 'جارٍ التسجيل...' : 'تسجيل الحركة'}
+            {busy ? 'جارٍ التسجيل…' : 'تسجيل الحركة'}
           </button>
           <button type="button" onClick={onClose} className={ghostButton}>إلغاء</button>
         </>

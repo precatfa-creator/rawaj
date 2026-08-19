@@ -10,13 +10,11 @@ import { StockForm } from '../components/StockForm';
 import { Combobox } from '../components/Combobox';
 import { BulkBar } from '../components/BulkBar';
 import { productBulk } from '../lib/bulk';
-import { Pagination } from '../components/ui';
+import { Pagination, money } from '../components/ui';
 import type { Product } from '../types';
 import type { PagedProps } from '../lib/route';
 
 const STAGGER_CAP = 8;
-const money = (value: number) => `${Math.round(value).toLocaleString('en-US')} د.ل`;
-
 const statusLabels: Record<Product['status'], string> = {
   active: 'معروض',
   draft: 'مسودة',

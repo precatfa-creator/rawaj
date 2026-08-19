@@ -1,4 +1,4 @@
-import type { OrderStatus } from '../types';
+import type { Order, OrderStatus } from '../types';
 
 /**
  * The delivery journey, as a line the customer can be walked along.
@@ -39,4 +39,23 @@ export const trackingState = (status: OrderStatus): TrackState => {
   // An unknown status is treated as the beginning rather than crashing the
   // details view: the badge beside it still prints whatever the row says.
   return { index: index === -1 ? 0 : index, halted: null };
+};
+
+/**
+ * The explicit date on the order wins. Otherwise the zone's delivery duration
+ * gives the operator a useful ETA instead of an unexplained "not specified".
+ * UTC calendar arithmetic keeps a date-only value from shifting a day when the
+ * browser and server use different time zones.
+ */
+export const estimatedDeliveryDate = (
+  order: Pick<Order, 'createdAt' | 'deliveryDate'>,
+  deliveryTimeDays?: number,
+): string | null => {
+  if (order.deliveryDate) return order.deliveryDate;
+  if (deliveryTimeDays === undefined || !Number.isFinite(deliveryTimeDays)) return null;
+
+  const created = new Date(order.createdAt);
+  if (Number.isNaN(created.getTime())) return null;
+  created.setUTCDate(created.getUTCDate() + Math.max(0, Math.round(deliveryTimeDays)));
+  return created.toISOString().slice(0, 10);
 };

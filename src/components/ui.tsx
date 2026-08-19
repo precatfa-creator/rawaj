@@ -164,8 +164,17 @@ export const Pill: React.FC<{ children: React.ReactNode; tone?: string }> = ({ c
   </span>
 );
 
-export const money = (value: number) => `${Math.round(value).toLocaleString('en-US')} د.ل`;
-export const count = (value: number) => value.toLocaleString('en-US');
+/**
+ * One cached formatter rather than one per call: these run once per money cell,
+ * and `Intl.NumberFormat` is expensive to construct.
+ *
+ * Latin digits on purpose — the app is Arabic, but the operators read order
+ * totals against Latin-digit invoices and bank statements.
+ */
+const decimal = new Intl.NumberFormat('en-US', { maximumFractionDigits: 0 });
+
+export const money = (value: number) => `${decimal.format(value)} د.ل`;
+export const count = (value: number) => decimal.format(value);
 export const percent = (value: number | null) =>
   value === null ? '—' : `${(value * 100).toFixed(1)}%`;
 

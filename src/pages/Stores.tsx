@@ -123,7 +123,7 @@ export const Stores: React.FC<{ onOpenStore: (storeId: string) => void }> = ({ o
                   type="button"
                   onClick={() => onOpenStore(store.id)}
                   aria-label={`فتح ${store.name}`}
-                  className="flex-1 flex flex-col text-right focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 focus-visible:ring-inset"
+                  className="flex-1 flex cursor-pointer flex-col text-right focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 focus-visible:ring-inset"
                 >
                   <div className="h-48 w-full relative overflow-hidden bg-surface-200">
                     {store.image && (

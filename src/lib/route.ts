@@ -5,6 +5,13 @@ export interface Route {
   view: string;
   /** Set when a store is open. */
   storeId: string | null;
+  /** Set when a single record is open inside the section, e.g. an order. */
+  recordId?: string | null;
+  /**
+   * Everything else the page is showing — filters, sort, page size — as query
+   * parameters, so a narrowed list is a link somebody can send.
+   */
+  params?: Record<string, string>;
   /** Zero-based list page, carried in the hash so a page is linkable. */
   page: number;
 }
@@ -28,6 +35,7 @@ export const DEFAULT_STORE_SECTION = 'products';
  *   #/doctypes    portal, global DocType Builder (system admins only)
  *   #/settings    portal, this user's own preferences
  *   #/store/<id>/orders
+ *   #/store/<id>/orders/<orderId>  that order's details, open
    *   #/store/<id>/naming   that store's naming series (admins only)
    *   #/store/<id>/audit    that store's changes (admins only)
    *   #/store/<id>/permissions  store-scoped role permissions
@@ -36,24 +44,41 @@ export const parseHash = (hash: string): Route => {
   const [path, query = ''] = hash.replace(/^#\/?/, '').split('?');
   const parts = path.split('/').filter(Boolean);
 
+  const search = new URLSearchParams(query);
+
   // `p` is 1-based in the URL and 0-based in state, so shared links read naturally.
-  const raw = Number(new URLSearchParams(query).get('p'));
+  const raw = Number(search.get('p'));
   const page = Number.isInteger(raw) && raw > 1 ? raw - 1 : 0;
+
+  // `p` is the router's own; everything else belongs to whichever page reads it.
+  const params: Record<string, string> = {};
+  search.forEach((value, key) => { if (key !== 'p' && value !== '') params[key] = value; });
 
   if (parts[0] === 'store' && parts[1]) {
     const section = parts[2] && STORE_SECTIONS.includes(parts[2]) ? parts[2] : DEFAULT_STORE_SECTION;
-    return { view: section, storeId: decodeURIComponent(parts[1]), page };
+    const recordId = parts[3] ? decodeURIComponent(parts[3]) : null;
+    return { view: section, storeId: decodeURIComponent(parts[1]), recordId, params, page };
   }
 
   const view = parts[0] && PORTAL_VIEWS.includes(parts[0]) ? parts[0] : 'stats';
-  return { view, storeId: null, page };
+  return { view, storeId: null, params, page };
 };
 
 export const buildHash = (route: Route): string => {
+  const record = route.storeId && route.recordId ? `/${encodeURIComponent(route.recordId)}` : '';
   const path = route.storeId
-    ? `#/store/${encodeURIComponent(route.storeId)}/${route.view}`
+    ? `#/store/${encodeURIComponent(route.storeId)}/${route.view}${record}`
     : route.view === 'stats' ? '#/' : `#/${route.view}`;
-  return route.page > 0 ? `${path}?p=${route.page + 1}` : path;
+  // Sorted so the same view always produces the same string — otherwise
+  // `navigate` cannot tell "already here" from "changed".
+  const search = new URLSearchParams();
+  Object.keys(route.params ?? {}).sort().forEach(key => {
+    const value = (route.params ?? {})[key];
+    if (value !== '') search.set(key, value);
+  });
+  if (route.page > 0) search.set('p', String(route.page + 1));
+  const query = search.toString();
+  return query ? `${path}?${query}` : path;
 };
 
 /** Props every paged list page receives from the router. */

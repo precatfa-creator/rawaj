@@ -7,13 +7,11 @@ import { deleteCustomer } from '../lib/mutations';
 import { Confirm } from '../components/Confirm';
 import { CustomerForm } from '../components/forms';
 import { Combobox } from '../components/Combobox';
-import { Pagination } from '../components/ui';
+import { Pagination, money } from '../components/ui';
 import type { Customer } from '../types';
 import type { PagedProps } from '../lib/route';
 
 const STAGGER_CAP = 8;
-const money = (value: number) => `${Math.round(value).toLocaleString('en-US')} د.ل`;
-
 export const Customers: React.FC<PagedProps> = ({ page, onPage }) => {
   const { zones, activeStoreId, sharedStoreIds } = useAppStore();
   const [searchTerm, setSearchTerm] = useState('');

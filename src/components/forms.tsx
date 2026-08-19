@@ -83,7 +83,7 @@ export const describeSeries = (series: string): string => {
 const Footer: React.FC<{ busy: boolean; onCancel: () => void; label: string }> = ({ busy, onCancel, label }) => (
   <>
     <button type="submit" form="entity-form" disabled={busy} className={primaryButton}>
-      {busy ? 'جارٍ الحفظ...' : label}
+      {busy ? 'جارٍ الحفظ…' : label}
     </button>
     <button type="button" onClick={onCancel} className={ghostButton}>إلغاء</button>
   </>
@@ -168,7 +168,7 @@ export const ZoneForm: React.FC<{
       footer={
         <>
           <button type="submit" form="zone-form" disabled={busy} className={primaryButton}>
-            {busy ? 'جارٍ الحفظ...' : isNew ? 'إضافة المنطقة' : 'حفظ التعديلات'}
+            {busy ? 'جارٍ الحفظ…' : isNew ? 'إضافة المنطقة' : 'حفظ التعديلات'}
           </button>
           <button type="button" onClick={onClose} className={ghostButton}>إلغاء</button>
         </>
@@ -688,27 +688,38 @@ export const SalesRepForm: React.FC<{
 // ---- customer ----
 
 export const CustomerForm: React.FC<{
-  open: boolean; customer: Customer | null; onClose: () => void;
-}> = ({ open, customer, onClose }) => {
+  open: boolean;
+  customer: Customer | null;
+  onClose: () => void;
+  /** Prefills the name when launched from an unmatched customer search. */
+  initialName?: string;
+  /** Explicit when the form is nested in a store-scoped workflow such as an order. */
+  storeId?: string;
+  /** Lets the launching picker select the customer immediately after saving. */
+  onCreated?: (customer: Pick<Customer, 'id' | 'name' | 'city'>) => void;
+}> = ({ open, customer, onClose, initialName = '', storeId, onCreated }) => {
   const isNew = !customer;
   const { zones, activeStoreId } = useAppStore();
   const [draft, setDraft] = useState<CustomerDraft>({
     id: '', storeId: '', name: '', phone: '', whatsapp: '', city: '', address: '',
     status: 'active', namingSeries: '',
   });
-  const { busy, error, submit } = useSubmit(onClose);
+  const { busy, error, submit } = useSubmit(() => {
+    if (isNew) onCreated?.({ id: draft.id, name: draft.name.trim(), city: draft.city });
+    onClose();
+  });
   const [newZoneName, setNewZoneName] = useState<string | null>(null);
   const zoneResolver = useRef<((name: string | null) => void) | null>(null);
 
   const [seeded, setSeeded] = useState<string | null>(null);
-  const key = customer?.id ?? 'new';
+  const key = customer?.id ?? `new:${storeId ?? activeStoreId ?? ''}:${initialName}`;
   if (open && seeded !== key) {
     setSeeded(key);
     setDraft({
       id: customer?.id ?? newId(),
       // The same person shopping at two stores is two customers, one per store.
-      storeId: customer?.storeId ?? activeStoreId ?? '',
-      name: customer?.name ?? '',
+      storeId: customer?.storeId ?? storeId ?? activeStoreId ?? '',
+      name: customer?.name ?? initialName,
       phone: customer?.phone ?? '',
       whatsapp: customer?.whatsapp ?? '',
       city: customer?.city ?? '',

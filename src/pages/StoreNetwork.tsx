@@ -107,7 +107,7 @@ export const StoreNetwork: React.FC = () => {
         <div className="space-y-6">
           <div className="glass-panel rounded-3xl overflow-hidden">
             <div className="p-5 border-b border-surface-200/70 flex items-center gap-2"><StoreIcon size={20} className="text-primary-700" /><h3 className="font-black text-lg">المتاجر المرتبطة</h3></div>
-            {loading ? <div className="p-8 text-center text-surface-500">جارٍ التحميل...</div> : memberships.length === 0 ? <div className="p-8 text-center text-surface-500">لا توجد متاجر مرتبطة.</div> : (
+            {loading ? <div className="p-8 text-center text-surface-500">جارٍ التحميل…</div> : memberships.length === 0 ? <div className="p-8 text-center text-surface-500">لا توجد متاجر مرتبطة.</div> : (
               <div className="divide-y divide-surface-200/70">{memberships.map(item => <div key={item.storeId} className="p-5 flex flex-wrap items-center gap-3">
                 <div className="w-10 h-10 rounded-xl bg-primary-50 text-primary-700 grid place-items-center"><StoreIcon size={19} /></div>
                 <div className="flex-1 min-w-0"><p className="font-bold text-surface-900 truncate">{item.storeName}</p><p className="text-xs text-surface-500 font-mono" dir="ltr">{item.storeCode}</p></div>

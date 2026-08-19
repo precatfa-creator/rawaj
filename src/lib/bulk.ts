@@ -4,6 +4,7 @@ import {
   setOrderStatus, updateOrder, type WriteResult, type ZoneDraft,
 } from './mutations';
 import { downloadCsv, downloadXlsx, readSheet, toBoolean, toNumber, type SheetRow } from './sheet';
+import { narrow, type Narrowing } from './queries';
 import { formatOrderItems, parseOrderItems } from './orderSheet';
 import { byCode, zoneFromRow } from './zones';
 import { statusLabels } from './dashboardStats';
@@ -338,7 +339,7 @@ const ORDER_CUSTOMER_ID_HEADER = 'معرّف العميل (لا تعدّله)';
 const ORDER_STATUS_HEADER = 'الحالة';
 
 const ORDER_COLUMNS =
-  'id,orderNumber:order_number,storeId:store_id,customerId:customer_id,customerName:customer_name,items,subtotal,discount,deliveryFee:delivery_fee,total,status,notes,createdAt:created_at,deliveryDate:delivery_date,agentId:agent_id,zoneId:zone_id';
+  'id,orderNumber:order_number,storeId:store_id,customerId:customer_id,customerName:customer_name,items,subtotal,discount,deliveryFee:delivery_fee,total,status,statusReason:status_reason,notes,createdAt:created_at,deliveryDate:delivery_date,agentId:agent_id,zoneId:zone_id';
 
 /** Orders are unbounded; an export that tried to be complete would time out. */
 const ORDER_EXPORT_LIMIT = 5000;
@@ -364,9 +365,15 @@ const orderStatusFromLabel = (value: string, fallback: OrderStatus): OrderStatus
  *   - Customers are matched, never created. A typo in a customer name is a
  *     reported line, not a duplicate customer record nobody asked for.
  */
+/**
+ * `narrowing` is read at export time rather than captured, so the file matches
+ * what the operator is looking at — exporting the whole store while the screen
+ * shows one agent's late orders is the surprise this avoids.
+ */
 export const orderBulk = (
   storeId: string,
   refs: { zones: DeliveryZone[]; salesReps: SalesRep[] },
+  narrowing?: () => Narrowing,
 ): BulkSpec<Order> => {
   // Filled by `all()` (export) and `resolve()` (import), which both run before
   // any column or row is written.
@@ -413,8 +420,8 @@ export const orderBulk = (
 
     all: async () => {
       await loadSkus();
-      const { data, error } = await supabase
-        .from('orders').select(ORDER_COLUMNS).eq('store_id', storeId)
+      const request = supabase.from('orders').select(ORDER_COLUMNS).eq('store_id', storeId);
+      const { data, error } = await narrow(request, narrowing?.() ?? {})
         .order('created_at', { ascending: false }).limit(ORDER_EXPORT_LIMIT);
       if (error) { console.error('order export failed', error); return []; }
       return (data ?? []) as unknown as Order[];

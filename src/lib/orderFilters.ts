@@ -64,6 +64,35 @@ export const orderTotalsArgs = (filters: OrderFilters): Record<string, unknown> 
   p_max_total: filters.maxTotal === '' ? null : Number(filters.maxTotal),
 });
 
+/**
+ * The filters as URL query parameters, and back.
+ *
+ * Short keys because the whole point is a link an operator can paste into a
+ * message. Empty values are dropped rather than written as `key=`, so the
+ * unfiltered list stays a clean URL.
+ */
+const PARAM_KEYS: Array<[keyof OrderFilters, string]> = [
+  ['status', 'status'], ['agentId', 'agent'], ['zoneId', 'zone'], ['search', 'q'],
+  ['from', 'from'], ['to', 'to'], ['minTotal', 'min'], ['maxTotal', 'max'],
+];
+
+export const filterParams = (filters: OrderFilters): Record<string, string> =>
+  Object.fromEntries(
+    PARAM_KEYS.map(([field, key]) => [key, String(filters[field] ?? '')]).filter(([, value]) => value !== ''),
+  );
+
+export const filtersFromParams = (
+  params: Record<string, string>,
+  storeId: string | null,
+): OrderFilters => {
+  const filters = emptyOrderFilters(storeId);
+  PARAM_KEYS.forEach(([field, key]) => {
+    const value = params[key];
+    if (value) (filters as unknown as Record<string, string>)[field] = value;
+  });
+  return filters;
+};
+
 /** True when anything narrows the list beyond the store it belongs to. */
 export const isFiltered = (filters: OrderFilters): boolean =>
   Boolean(filters.status || filters.agentId || filters.zoneId || filters.search

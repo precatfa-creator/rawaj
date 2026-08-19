@@ -13,7 +13,6 @@
     "bootstrap:admin": "node scripts/bootstrap-admin.mjs"
   },
   "dependencies": {
-    "@heyputer/puter.js": "^2.6.0",
     "@supabase/supabase-js": "^2.111.0",
     "@tailwindcss/vite": "^4.1.14",
     "@vitejs/plugin-react": "^5.0.4",
@@ -43,9 +42,6 @@
     "vite": "^6.2.3"
   },
   "overrides": {
-    "@heyputer/puter.js": {
-      "socket.io-client": "^4.8.3"
-    },
     "ws": "^8.21.1"
   }
 }

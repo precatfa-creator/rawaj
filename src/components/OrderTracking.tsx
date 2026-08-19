@@ -1,119 +1,140 @@
 import React from 'react';
-import { CheckCircle2, ChevronLeft, ClipboardCheck, FileText, PackageCheck, Truck, XCircle } from 'lucide-react';
-import type { LucideIcon } from 'lucide-react';
+import { Check, CircleDot, RotateCcw, XCircle } from 'lucide-react';
 import { motion, useReducedMotion } from 'motion/react';
-import { statusLabels } from '../lib/dashboardStats';
-import { TRACK_STEPS, trackingState } from '../lib/tracking';
-import type { Order, SalesRep } from '../types';
+import { estimatedDeliveryDate, TRACK_STEPS, trackingState } from '../lib/tracking';
+import type { DeliveryZone, Order, SalesRep } from '../types';
 
-/** One icon per stage, in the same order as `TRACK_STEPS`. */
-const STEP_ICONS: LucideIcon[] = [FileText, ClipboardCheck, PackageCheck, Truck, CheckCircle2];
+/** A stage the order actually passed, as recorded by the audit trail. */
+export interface StatusEvent {
+  status: string;
+  at: string;
+  by: string;
+}
+
+const stamp = new Intl.DateTimeFormat('ar-LY', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
+const longDay = new Intl.DateTimeFormat('ar-LY', { day: 'numeric', month: 'long', year: 'numeric', timeZone: 'UTC' });
 
 /**
- * The delivery journey as a line, right to left like the rest of the interface.
+ * The delivery journey as a ladder, read top to bottom.
  *
- * It reads from the order's current status only — see `lib/tracking.ts` — so
- * there are no per-step dates to promise. What it does show is where the order
- * is now, and that is the question the customer on the phone is asking.
+ * Vertical, not the horizontal band it used to be, for two reasons: it lives in
+ * a column beside the order now, and every rung carries the moment it happened
+ * and who moved it there. Those come from the audit trail — the orders table
+ * keeps one status, not a history — so a step with no recorded moment prints
+ * the stage alone rather than inventing a date for it.
  */
-export const OrderTracking: React.FC<{ order: Order; rep?: SalesRep }> = ({ order, rep }) => {
+/**
+ * Cancellation is a failure and reads red; a return is a normal, if unwanted,
+ * end to the trip — the goods came back — and reads amber.
+ */
+const HALT_TONES = {
+  canceled: {
+    marker: 'bg-rose-600 border-rose-600 text-white',
+    banner: 'border-rose-100 bg-rose-50 text-rose-800',
+    detail: 'text-rose-700',
+    line: 'bg-rose-300',
+  },
+  returned: {
+    marker: 'bg-amber-500 border-amber-500 text-white',
+    banner: 'border-amber-200 bg-amber-50 text-amber-900',
+    detail: 'text-amber-800',
+    line: 'bg-amber-300',
+  },
+} as const;
+
+export const OrderTracking: React.FC<{
+  order: Order;
+  rep?: SalesRep;
+  zone?: DeliveryZone;
+  /** Status changes from the audit log, oldest first. Empty is normal: the log
+      is admin-only, so most people see the ladder without moments. */
+  events?: StatusEvent[];
+}> = ({ order, rep, zone, events = [] }) => {
   const state = trackingState(order.status);
   const still = useReducedMotion();
-
   const halted = state.halted !== null;
-  const tone = {
-    // Cancelled and returned keep the same layout and change only the palette:
-    // a differently-shaped panel for the unhappy path is one more thing to read.
-    band: halted ? 'from-rose-600 to-rose-500' : 'from-primary-700 to-primary-500',
-    meta: halted ? 'bg-rose-50 border-rose-100' : 'bg-primary-50 border-primary-100',
-    done: halted ? 'bg-rose-500 border-rose-500' : 'bg-primary-600 border-primary-600',
-    line: halted ? 'bg-rose-400' : 'bg-primary-500',
-  };
+  const tone = state.halted ? HALT_TONES[state.halted] : null;
+  const expected = estimatedDeliveryDate(order, zone?.deliveryTimeDays);
 
-  const meta: Array<[string, string]> = [
-    ['المندوب', rep?.name ?? 'بدون مندوب'],
-    ['الحالة', statusLabels[order.status] ?? order.status],
-    ['التسليم المتوقع', order.deliveryDate
-      ? new Date(order.deliveryDate).toLocaleDateString('ar-LY', { day: 'numeric', month: 'long', year: 'numeric' })
-      : 'غير محدد'],
-  ];
+  const firstReached = (status: string) => events.find(event => event.status === status);
+  const halt = halted ? events.find(event => event.status === order.status) : undefined;
 
   return (
-    <section aria-label="تتبع الطلب" className="rounded-2xl border border-surface-200 overflow-hidden bg-white">
-      <h3 className={`bg-gradient-to-l ${tone.band} text-white text-center font-black py-3 px-4`}>
-        تتبع الطلب · <span className="font-mono" dir="ltr">{order.orderNumber}</span>
-      </h3>
+    <section aria-label="سير الطلب" className="rounded-2xl border border-surface-200 bg-white overflow-hidden">
+      <header className="flex items-baseline justify-between gap-3 px-4 py-3 border-b border-surface-200 bg-surface-50">
+        <h3 className="font-black text-sm text-surface-900">سير الطلب</h3>
+        <p className="text-xs text-surface-500">
+          {expected ? `التسليم المتوقع ${longDay.format(new Date(`${expected}T00:00:00.000Z`))}` : 'بلا موعد تسليم'}
+        </p>
+      </header>
 
-      <dl className={`grid grid-cols-1 sm:grid-cols-3 gap-y-2 gap-x-4 border-b ${tone.meta} px-4 py-3 text-sm text-center sm:text-right`}>
-        {meta.map(([label, value]) => (
-          <div key={label} className="min-w-0">
-            <dt className="inline font-black text-surface-700">{label}: </dt>
-            <dd className="inline text-surface-600">{value}</dd>
-          </div>
-        ))}
-      </dl>
-
-      {/* The list carries the whole state for a screen reader; the circles and
-          the line above it are decoration over that. */}
-      <ol className="flex items-start px-2 py-6 sm:px-4">
+      <ol className="relative px-4 py-4">
         {TRACK_STEPS.map((step, index) => {
-          const Icon = STEP_ICONS[index];
-          const reached = !halted || state.halted === 'returned' ? index <= state.index : false;
+          const reached = index <= state.index && !(halted && state.halted === 'canceled' && index > 0);
           const current = !halted && index === state.index;
+          const event = firstReached(step.status);
+          const last = index === TRACK_STEPS.length - 1;
           return (
-            <li key={step.status} className="relative flex-1 flex flex-col items-center gap-2 text-center">
-              {index > 0 && (
-                <>
-                  {/* Spans from this circle's centre to the previous one's — in
-                      RTL that is rightwards, which is why it is anchored right. */}
-                  <span aria-hidden className="absolute top-5 sm:top-6 right-1/2 w-full h-1 -translate-y-1/2 bg-surface-200 rounded-full" />
-                  <motion.span
-                    aria-hidden
-                    className={`absolute top-5 sm:top-6 right-1/2 w-full h-1 -translate-y-1/2 rounded-full origin-right ${tone.line}`}
-                    initial={still ? false : { scaleX: 0 }}
-                    animate={{ scaleX: reached ? 1 : 0 }}
-                    transition={{ duration: still ? 0 : 0.45, delay: still ? 0 : index * 0.15 }}
-                  />
-                  <ChevronLeft
-                    aria-hidden
-                    size={16}
-                    className={`absolute top-5 sm:top-6 right-0 translate-x-1/2 -translate-y-1/2 ${
-                      reached ? 'text-white' : 'text-surface-400'
-                    }`}
-                  />
-                </>
+            <li key={step.status} className="relative flex gap-3 pb-5 last:pb-0">
+              {/* The rail runs between markers, so the last rung has none. */}
+              {!last && (
+                <span
+                  aria-hidden
+                  className={`absolute top-7 bottom-0 right-3 w-px ${
+                    reached ? tone?.line ?? 'bg-primary-300' : 'bg-surface-200'
+                  }`}
+                />
               )}
-
               <motion.span
                 aria-hidden
-                initial={still ? false : { scale: 0.6, opacity: 0 }}
+                initial={still ? false : { scale: 0.7, opacity: 0 }}
                 animate={{ scale: 1, opacity: 1 }}
-                transition={{ duration: still ? 0 : 0.3, delay: still ? 0 : index * 0.15 }}
-                className={`relative z-10 grid place-items-center w-10 h-10 sm:w-12 sm:h-12 rounded-full border-4 border-white shadow-sm ${
-                  reached ? `${tone.done} text-white` : 'bg-surface-200 text-surface-500'
-                } ${current ? `ring-4 ring-primary-200 ${still ? '' : 'animate-pulse'}` : ''}`}
+                transition={{ duration: still ? 0 : 0.25, delay: still ? 0 : index * 0.06 }}
+                className={`relative z-10 mt-0.5 grid place-items-center w-6 h-6 shrink-0 rounded-full border-2 ${
+                  reached
+                    ? tone?.marker ?? 'bg-primary-600 border-primary-600 text-white'
+                    : 'bg-white border-surface-300 text-transparent'
+                } ${current ? 'ring-4 ring-primary-100' : ''}`}
               >
-                <Icon size={20} />
+                {current ? <CircleDot size={13} /> : <Check size={13} />}
               </motion.span>
 
-              <span className={`text-[0.7rem] sm:text-xs font-bold leading-tight px-0.5 ${
-                reached ? 'text-surface-900' : 'text-surface-400'
-              }`}>
-                {step.label}
-              </span>
+              <div className="min-w-0 -mt-0.5">
+                <p className={`text-sm font-bold ${reached ? 'text-surface-900' : 'text-surface-400'}`}>
+                  {step.label}
+                </p>
+                {event ? (
+                  <p className="text-xs text-surface-500 mt-0.5">
+                    <span className="tabular-nums">{stamp.format(new Date(event.at))}</span>
+                    {event.by && <span> · {event.by}</span>}
+                  </p>
+                ) : (
+                  reached && <p className="text-xs text-surface-400 mt-0.5">بلا وقت مسجّل</p>
+                )}
+              </div>
             </li>
           );
         })}
       </ol>
 
       {halted && (
-        <p role="status" className="flex items-center justify-center gap-2 border-t border-rose-100 bg-rose-50 text-rose-800 font-bold text-sm px-4 py-3">
-          <XCircle size={18} className="shrink-0" />
-          {state.halted === 'canceled'
-            ? 'أُلغي هذا الطلب ولم يكتمل التسليم.'
-            : 'أُرجع هذا الطلب بعد التسليم.'}
+        <p role="status" className="flex items-start gap-2 border-t border-rose-100 bg-rose-50 text-rose-800 font-bold text-sm px-4 py-3">
+          <XCircle size={18} className="shrink-0 mt-0.5" />
+          <span>
+            {state.halted === 'canceled' ? 'أُلغي هذا الطلب ولم يكتمل التسليم.' : 'أُرجع هذا الطلب بعد التسليم.'}
+            {halt && (
+              <span className="block font-medium text-rose-700 mt-0.5 tabular-nums">
+                {stamp.format(new Date(halt.at))}{halt.by && ` · ${halt.by}`}
+              </span>
+            )}
+          </span>
         </p>
       )}
+
+      <footer className="border-t border-surface-200 px-4 py-3 text-xs text-surface-600 flex items-center justify-between gap-3">
+        <span>المندوب</span>
+        <span className="font-bold text-surface-900 truncate">{rep?.name ?? 'بدون مندوب'}</span>
+      </footer>
     </section>
   );
 };

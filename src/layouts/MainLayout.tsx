@@ -305,23 +305,30 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
 
             Two things keep that readable over an image nobody vetted. The
             gradient is opaque at the bottom where the text sits and clears
-            towards the top, so a pale photo cannot wash the name out. And when
-            a store has no image the block falls back to the plain light header
-            rather than showing white text on nothing. */}
-        <div className={`relative overflow-hidden ${storeImage ? 'text-white' : ''}`}>
+            towards the top, so a pale photo cannot wash the name out. The mask
+            below only starts fading past the last line of text, and runs out
+            inside the navigation, so the photograph dissolves into the sidebar
+            instead of ending as a box. */}
+        <div className={`relative ${storeImage ? 'text-white' : ''}`}>
           {storeImage && (
-            <>
+            /* ponytail: one mask on the wrapper does the whole dissolve. The
+               photo and its darkening gradient both sit inside the mask, so
+               they fade out together and the sidebar's own background is what
+               emerges — no white haze band painted over the seam. Stops are in
+               px from the bottom, not percentages, so the opaque part always
+               covers the text no matter how tall the header grows. */
+            <div className="absolute inset-x-0 top-0 -bottom-24 overflow-hidden [mask-image:linear-gradient(to_bottom,black_0,black_calc(100%_-_124px),rgba(0,0,0,0.5)_calc(100%_-_74px),rgba(0,0,0,0.14)_calc(100%_-_30px),transparent_100%)]">
               <img
                 src={storeImage}
                 alt=""
                 loading="lazy"
-                className="absolute inset-0 w-full h-full object-cover"
+                className="h-full w-full object-cover"
               />
-              <div className="absolute inset-0 bg-gradient-to-t from-surface-900/95 via-surface-900/70 to-surface-900/35" />
-            </>
+              <div className="absolute inset-0 bg-[linear-gradient(to_top,rgba(15,23,42,0)_0%,rgba(15,23,42,0.35)_28%,rgba(15,23,42,0.8)_52%,rgba(15,23,42,0.62)_78%,rgba(15,23,42,0.3)_100%)]" />
+            </div>
           )}
 
-          <div className="relative p-5 pb-4">
+          <div className="relative z-10 p-5 pb-8">
             <button
               onClick={onExitStore}
               className={`flex items-center gap-2 text-sm font-bold mb-4 rounded-lg px-2 py-1.5 -ms-2 transition-colors w-full focus-visible:outline-none focus-visible:ring-2 ${
@@ -345,8 +352,8 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
           </div>
         </div>
 
-        {/* The header now ends on its own edge, so the old `mt-4` that separated
-            it from a padded block would read as a gap under a photo. */}
+        {/* No top margin here: the navigation begins inside the feather's final
+            transparent pixels, which is what removes the old horizontal seam. */}
         <nav aria-label="أقسام المتجر" className="flex-1 overflow-y-auto no-scrollbar p-4 space-y-5">
           {groups.map(group => (
             <div key={group.title}>

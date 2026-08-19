@@ -184,7 +184,7 @@ export const AdminUsers: React.FC<AdminUsersProps> = ({ currentUserId }) => {
             disabled={submitting}
             className="w-full bg-primary-700 hover:bg-primary-800 disabled:opacity-60 text-white font-bold py-3 rounded-xl transition-colors"
           >
-            {submitting ? 'جارٍ الإنشاء...' : 'إنشاء المستخدم'}
+            {submitting ? 'جارٍ الإنشاء…' : 'إنشاء المستخدم'}
           </button>
         </form>
 
@@ -196,7 +196,7 @@ export const AdminUsers: React.FC<AdminUsersProps> = ({ currentUserId }) => {
           </div>
 
           {loading ? (
-            <div className="p-10 text-center text-surface-500">جارٍ التحميل...</div>
+            <div className="p-10 text-center text-surface-500">جارٍ التحميل…</div>
           ) : profiles.length === 0 ? (
             <div className="p-10 text-center text-surface-500">لا يوجد مستخدمون.</div>
           ) : (
@@ -222,7 +222,7 @@ export const AdminUsers: React.FC<AdminUsersProps> = ({ currentUserId }) => {
                     onClick={() => void setUserStatus(item)}
                     className={`text-xs font-bold rounded-xl px-4 py-2 transition-colors disabled:opacity-40 ${item.active ? 'bg-emerald-50 text-emerald-700 hover:bg-emerald-100' : 'bg-rose-50 text-rose-700 hover:bg-rose-100'}`}
                   >
-                    {changingUserId === item.id ? '...' : item.active ? 'مفعّل' : 'معطّل'}
+                    {changingUserId === item.id ? '…' : item.active ? 'مفعّل' : 'معطّل'}
                   </button>
                 </div>
               ))}

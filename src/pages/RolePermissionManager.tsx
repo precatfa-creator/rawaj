@@ -234,7 +234,7 @@ export const RolePermissionManager: React.FC<{ storeId: string }> = ({ storeId }
 
       {(error || message) && <div className={`rounded-2xl border px-4 py-3 font-bold text-sm ${error ? 'border-rose-200 bg-rose-50 text-rose-700' : 'border-emerald-200 bg-emerald-50 text-emerald-700'}`}>{error || message}</div>}
 
-      {loading ? <div className="glass-panel rounded-3xl p-10 text-center text-surface-500">جارٍ تحميل الصلاحيات...</div> : (
+      {loading ? <div className="glass-panel rounded-3xl p-10 text-center text-surface-500">جارٍ تحميل الصلاحيات…</div> : (
         <div className="glass-panel rounded-3xl p-5 md:p-7 space-y-6">
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
             <label className="block"><span className="block text-sm font-bold text-surface-600 mb-2">الدور</span>

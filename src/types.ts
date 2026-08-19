@@ -80,6 +80,8 @@ export interface Order {
   deliveryFee: number;
   total: number;
   status: OrderStatus;
+  /** Why the order was canceled or returned. Empty for every other status. */
+  statusReason?: string;
   notes: string;
   createdAt: string;
   deliveryDate?: string;

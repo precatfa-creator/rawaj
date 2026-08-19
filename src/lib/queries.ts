@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { supabase } from '../db/supabase';
 import { normalizeArabic } from './arabic';
 // Type-only in the other direction, so the two files do not form a runtime cycle.
@@ -41,7 +41,97 @@ export interface PagedQuery {
   ascending?: boolean;
   page: number;
   pageSize?: number;
+  /**
+   * `exact` counts every matching row, which is a full scan in Postgres. Lists
+   * that can grow past a few thousand rows pass `estimated`: PostgREST answers
+   * from the planner and only counts exactly while the table is small.
+   */
+  count?: 'exact' | 'estimated';
 }
+
+/** The equality, IN, null, range and search narrowing shared by every reader. */
+export interface Narrowing {
+  match?: Record<string, string | undefined>;
+  matchIn?: Record<string, string[]>;
+  isNull?: string;
+  filters?: RangeFilter[];
+  search?: string;
+}
+
+/**
+ * Applied to a Supabase query builder. Exported so the list, the id sweep behind
+ * "select every match", and the export all narrow by exactly the same rules —
+ * a second copy of this is how a bulk action ends up hitting rows the operator
+ * never saw.
+ */
+interface FilterBuilder {
+  eq: (column: string, value: string) => FilterBuilder;
+  in: (column: string, values: string[]) => FilterBuilder;
+  is: (column: string, value: null) => FilterBuilder;
+  gte: (column: string, value: string) => FilterBuilder;
+  lte: (column: string, value: string) => FilterBuilder;
+  ilike: (column: string, value: string) => FilterBuilder;
+}
+
+export const narrow = <Q,>(request: Q, { match, matchIn, isNull, filters, search }: Narrowing): Q => {
+  let query = request as unknown as FilterBuilder;
+  Object.entries(match ?? {}).forEach(([column, value]) => {
+    if (value !== undefined && value !== null && value !== '') query = query.eq(column, value);
+  });
+  Object.entries(matchIn ?? {}).forEach(([column, values]) => {
+    if (values.length > 0) query = query.in(column, values);
+  });
+  if (isNull) query = query.is(isNull, null);
+  (filters ?? []).forEach(({ column, op, value }) => {
+    if (value !== '') query = op === 'gte' ? query.gte(column, value) : query.lte(column, value);
+  });
+  const term = normalizeArabic(search ?? '');
+  if (term) query = query.ilike('search_text', `%${term}%`);
+  return query as unknown as Q;
+};
+
+/**
+ * Ids of every row the narrowing matches, capped.
+ *
+ * Backs "select all N results": bulk actions take ids, and sending 2 000 of
+ * them is cheaper and far more predictable than teaching every mutation to
+ * repeat the filter server-side. The cap is reported so the UI can say how many
+ * it actually selected rather than pretending it took the lot.
+ */
+export const matchingIds = async (
+  table: PagedQuery['table'],
+  narrowing: Narrowing,
+  cap: number,
+): Promise<{ ids: string[]; capped: boolean }> => {
+  const { data, error } = await narrow(supabase.from(table).select('id'), narrowing).limit(cap + 1);
+  if (error) {
+    console.error(`Failed to list ${table} ids`, error);
+    return { ids: [], capped: false };
+  }
+  const ids = (data ?? []).map(row => (row as { id: string }).id);
+  return { ids: ids.slice(0, cap), capped: ids.length > cap };
+};
+
+/**
+ * A value that settles before it is used as a query key.
+ *
+ * Every keystroke in a search box is a round trip otherwise, and the count that
+ * comes back with it is the expensive half.
+ */
+export const useDebounced = <T,>(value: T, ms = 250): T => {
+  const [settled, setSettled] = useState(value);
+  const first = useRef(true);
+
+  useEffect(() => {
+    // The initial value is already settled; waiting on it would blank the first
+    // paint of a page opened from a link that carries a search term.
+    if (first.current) { first.current = false; return; }
+    const timer = setTimeout(() => setSettled(value), ms);
+    return () => clearTimeout(timer);
+  }, [value, ms]);
+
+  return settled;
+};
 
 /**
  * One page of rows plus the server-side total.
@@ -51,7 +141,7 @@ export interface PagedQuery {
  * number that only describes the current 24 rows.
  */
 export const usePagedList = <T,>(query: PagedQuery): Page<T> => {
-  const { table, columns, match, matchIn, isNull, filters, search, orderBy, ascending = false, page, pageSize = PAGE_SIZE } = query;
+  const { table, columns, match, matchIn, isNull, filters, search, orderBy, ascending = false, page, pageSize = PAGE_SIZE, count: countMode = 'exact' } = query;
   const matchKey = JSON.stringify(match ?? {});
   const matchInKey = JSON.stringify(matchIn ?? {});
   // Serialised for the same reason `match` is: an array literal rebuilt on every
@@ -71,23 +161,13 @@ export const usePagedList = <T,>(query: PagedQuery): Page<T> => {
     setLoading(true);
 
     const run = async () => {
-      let request = supabase.from(table).select(columns, { count: 'exact' });
-
-      Object.entries(JSON.parse(matchKey) as Record<string, string | undefined>).forEach(([column, value]) => {
-        if (value !== undefined && value !== null && value !== '') request = request.eq(column, value);
+      const request = narrow(supabase.from(table).select(columns, { count: countMode }), {
+        match: JSON.parse(matchKey) as Record<string, string | undefined>,
+        matchIn: JSON.parse(matchInKey) as Record<string, string[]>,
+        isNull,
+        filters: JSON.parse(filtersKey) as RangeFilter[],
+        search,
       });
-      Object.entries(JSON.parse(matchInKey) as Record<string, string[]>).forEach(([column, values]) => {
-        if (values.length > 0) request = request.in(column, values);
-      });
-
-      if (isNull) request = request.is(isNull, null);
-
-      (JSON.parse(filtersKey) as RangeFilter[]).forEach(({ column, op, value }) => {
-        if (value !== '') request = op === 'gte' ? request.gte(column, value) : request.lte(column, value);
-      });
-
-      const term = normalizeArabic(search ?? '');
-      if (term) request = request.ilike('search_text', `%${term}%`);
 
       const from = page * pageSize;
       const { data, count, error: queryError } = await request
@@ -108,7 +188,7 @@ export const usePagedList = <T,>(query: PagedQuery): Page<T> => {
 
     void run();
     return () => { active = false; };
-  }, [table, columns, matchKey, matchInKey, isNull, filtersKey, search, orderBy, ascending, page, pageSize, token]);
+  }, [table, columns, matchKey, matchInKey, isNull, filtersKey, search, orderBy, ascending, page, pageSize, countMode, token]);
 
   // Realtime keeps the *current page* fresh rather than patching rows into local
   // state, which would reintroduce optimistic-update drift.
