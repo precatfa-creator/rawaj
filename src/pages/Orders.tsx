@@ -8,7 +8,7 @@ import {
 import { motion, useReducedMotion } from 'motion/react';
 import { OrderStatus } from '../types';
 import {
-  ALL_STATUSES, STATUS_ACCENT_BASE, STATUS_ACCENT_NONE, statusAccent, statusLabels,
+  ALL_STATUSES, STATUS_ACCENT_BASE, STATUS_ACCENT_NONE, statusAccent, statusLabels, statusWash,
 } from '../lib/dashboardStats';
 import {
   matchingIds, PAGE_SIZE, useDimension, useMatchingRows, useOrderTotals, usePagedList,
@@ -868,8 +868,8 @@ export const Orders: React.FC<OrdersProps> = ({ page, onPage, recordId, onRecord
                       event.preventDefault();
                       onRecord(order.id);
                     }}
-                    className={`hover:bg-surface-50/70 transition-colors cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary-500 ${
-                      selected.has(order.id) ? 'bg-primary-50/60' : ''
+                    className={`transition-[filter,background-color] hover:brightness-[0.985] cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary-500 ${
+                      selected.has(order.id) ? 'bg-primary-50/80' : statusWash[order.status]
                     }`}
                   >
                     {/* The accent rides the first cell rather than the row: a
@@ -1105,8 +1105,8 @@ export const Orders: React.FC<OrdersProps> = ({ page, onPage, recordId, onRecord
                                 event.preventDefault();
                                 onRecord(order.id);
                               }}
-                              className={`cursor-pointer hover:bg-surface-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary-500 ${
-                                selected.has(order.id) ? 'bg-primary-50/60' : ''
+                              className={`cursor-pointer transition-[filter,background-color] hover:brightness-[0.985] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary-500 ${
+                                selected.has(order.id) ? 'bg-primary-50/80' : statusWash[order.status]
                               }`}
                             >
                               <td className="px-4 py-3">
