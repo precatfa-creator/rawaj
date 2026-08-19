@@ -258,7 +258,7 @@ export const ZoneForm: React.FC<{
         </Field>
         <div className="grid grid-cols-2 gap-4">
           <Field label="رسوم التوصيل (د.ل)">
-            <input type="number" min={0} step="0.5" value={draft.fee} onChange={e => set('fee', Number(e.target.value))} className={fieldClass} />
+            <input type="number" min={0} step="0.5" value={draft.fee || ''} placeholder="0" onChange={e => set('fee', Number(e.target.value))} className={fieldClass} />
           </Field>
           <Field label="مدة التوصيل (أيام)">
             <input type="number" min={1} value={draft.deliveryTimeDays} onChange={e => set('deliveryTimeDays', Number(e.target.value))} className={fieldClass} />
@@ -292,7 +292,8 @@ export const ZoneForm: React.FC<{
                 min={0}
                 max={draft.commissionType === 'percent' ? 100 : undefined}
                 step="0.5"
-                value={draft.commissionValue}
+                value={draft.commissionValue || ''}
+                placeholder="0"
                 onChange={e => set('commissionValue', Number(e.target.value))}
                 className={fieldClass}
               />
@@ -359,7 +360,7 @@ export const StoreForm: React.FC<{
           label="صورة المتجر"
           hint="تظهر على بطاقة المتجر."
         />
-        <Field label="صفحة فيسبوك" hint="كثير من المتاجر لا تملك موقعاً، فقط صفحة.">
+        <Field label="صفحة فيسبوك">
           <input
             value={facebookPage}
             onChange={e => setFacebookPage(e.target.value)}
@@ -471,10 +472,10 @@ export const ProductForm: React.FC<{
           placeholder="اختر فئة…"
         />
         <Field label="سعر الشراء (د.ل)">
-          <input type="number" min={0} step="0.01" value={draft.purchasePrice} onChange={e => set('purchasePrice', Number(e.target.value))} required className={fieldClass} />
+          <input type="number" min={0} step="0.01" value={draft.purchasePrice || ''} placeholder="0" onChange={e => set('purchasePrice', Number(e.target.value))} required className={fieldClass} />
         </Field>
         <Field label="سعر البيع (د.ل)" hint={`الربح المحتسب: ${margin.toLocaleString('en-US')} د.ل`}>
-          <input type="number" min={0} step="0.01" value={draft.sellingPrice} onChange={e => set('sellingPrice', Number(e.target.value))} required className={fieldClass} />
+          <input type="number" min={0} step="0.01" value={draft.sellingPrice || ''} placeholder="0" onChange={e => set('sellingPrice', Number(e.target.value))} required className={fieldClass} />
         </Field>
         {/* Editable exactly once. After creation the quantity is the running
             total of the stock ledger, and typing over it would be a silent lie:
@@ -486,7 +487,8 @@ export const ProductForm: React.FC<{
           <input
             type="number"
             min={0}
-            value={draft.stock}
+            value={draft.stock || ''}
+            placeholder="0"
             onChange={e => set('stock', Number(e.target.value))}
             required={isNew}
             readOnly={!isNew}
@@ -496,7 +498,7 @@ export const ProductForm: React.FC<{
           />
         </Field>
         <Field label="حد التنبيه">
-          <input type="number" min={0} value={draft.minStock} onChange={e => set('minStock', Number(e.target.value))} required className={fieldClass} />
+          <input type="number" min={0} value={draft.minStock || ''} placeholder="0" onChange={e => set('minStock', Number(e.target.value))} required className={fieldClass} />
         </Field>
         {/* One quantity per item, not per size: the ledger counts pieces, and
             splitting stock by size would need a row per variant. The sizes
@@ -659,7 +661,7 @@ export const SalesRepForm: React.FC<{
         </div>
         <Field label="العمولة لكل طلب مسلَّم (د.ل)" hint="تُستخدم للمناطق التي لا تحدّد عمولة خاصة بها.">
           <input
-            type="number" min={0} step="0.5" value={draft.commission}
+            type="number" min={0} step="0.5" value={draft.commission || ''} placeholder="0"
             onChange={e => set('commission', Number(e.target.value))}
             className={fieldClass}
           />

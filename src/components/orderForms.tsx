@@ -419,10 +419,10 @@ export const OrderForm: React.FC<{
 
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
           <Field label="الخصم (د.ل)">
-            <input type="number" min={0} step="0.01" value={discount} onChange={e => setDiscount(Number(e.target.value))} className={fieldClass} />
+            <input type="number" min={0} step="0.01" value={discount || ''} placeholder="0" onChange={e => setDiscount(Number(e.target.value))} className={fieldClass} />
           </Field>
           <Field label="رسوم التوصيل (د.ل)">
-            <input type="number" min={0} step="0.01" value={deliveryFee} onChange={e => setDeliveryFee(Number(e.target.value))} className={fieldClass} />
+            <input type="number" min={0} step="0.01" value={deliveryFee || ''} placeholder="0" onChange={e => setDeliveryFee(Number(e.target.value))} className={fieldClass} />
           </Field>
         </div>
 

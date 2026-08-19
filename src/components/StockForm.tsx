@@ -115,7 +115,7 @@ export const StockForm: React.FC<{
         {kind === 'adjustment' ? (
           <Field label="الكمية بعد الجرد" hint={`المسجّل حالياً: ${product.stock}`}>
             <input
-              type="number" min={0} value={counted}
+              type="number" min={0} value={counted || ''} placeholder="0"
               onChange={e => setCounted(Number(e.target.value))}
               required className={fieldClass}
             />
@@ -123,7 +123,7 @@ export const StockForm: React.FC<{
         ) : (
           <Field label="الكمية">
             <input
-              type="number" min={1} value={amount}
+              type="number" min={1} value={amount || ''} placeholder="0"
               onChange={e => setAmount(Number(e.target.value))}
               required className={fieldClass}
             />
