@@ -14,6 +14,15 @@ export interface Page<T> {
   reload: () => void;
 }
 
+export interface MatchingRows<T> {
+  rows: T[];
+  loading: boolean;
+  error: string;
+  /** True when more rows matched than the caller's safety ceiling. */
+  capped: boolean;
+  reload: () => void;
+}
+
 /** Comparisons a list filter can make beyond equality: date and amount ranges. */
 export interface RangeFilter {
   column: string;
@@ -201,6 +210,85 @@ export const usePagedList = <T,>(query: PagedQuery): Page<T> => {
   }, [table, reload]);
 
   return { rows, total, loading, error, reload };
+};
+
+/**
+ * Every row matching one narrowing, up to a deliberate ceiling.
+ *
+ * Grouped views cannot group one pagination page honestly: the same customer
+ * or product would be split into several unrelated sections. This reader walks
+ * the PostgREST result in small ranges so it also works when the project's API
+ * row limit is lower than the requested cap. Callers surface `capped` rather
+ * than pretending the partial result is complete.
+ */
+export const useMatchingRows = <T,>({
+  table, columns, match, matchIn, isNull, filters, search, orderBy,
+  ascending = false, enabled = true, cap = 2000,
+}: Omit<PagedQuery, 'page' | 'pageSize' | 'count'> & { enabled?: boolean; cap?: number }): MatchingRows<T> => {
+  const matchKey = JSON.stringify(match ?? {});
+  const matchInKey = JSON.stringify(matchIn ?? {});
+  const filtersKey = JSON.stringify(filters ?? []);
+  const [rows, setRows] = useState<T[]>([]);
+  const [loading, setLoading] = useState(enabled);
+  const [error, setError] = useState('');
+  const [capped, setCapped] = useState(false);
+  const [token, setToken] = useState(0);
+  const reload = useCallback(() => setToken(value => value + 1), []);
+
+  useEffect(() => {
+    if (!enabled) { setLoading(false); return; }
+    let active = true;
+    setLoading(true);
+
+    const run = async () => {
+      const found: T[] = [];
+      const batchSize = 500;
+      let queryError: { message?: string } | null = null;
+
+      while (found.length <= cap) {
+        const size = Math.min(batchSize, cap + 1 - found.length);
+        const request = narrow(supabase.from(table).select(columns), {
+          match: JSON.parse(matchKey) as Record<string, string | undefined>,
+          matchIn: JSON.parse(matchInKey) as Record<string, string[]>,
+          isNull,
+          filters: JSON.parse(filtersKey) as RangeFilter[],
+          search,
+        });
+        const { data, error: pageError } = await request
+          .order(orderBy, { ascending })
+          .range(found.length, found.length + size - 1);
+        if (pageError) { queryError = pageError; break; }
+        const pageRows = (data ?? []) as unknown as T[];
+        found.push(...pageRows);
+        if (pageRows.length < size) break;
+      }
+
+      if (!active) return;
+      if (queryError) {
+        console.error(`Failed to load matching ${table}`, queryError);
+        setError('تعذر تحميل البيانات المجمّعة.');
+      } else {
+        setError('');
+        setRows(found.slice(0, cap));
+        setCapped(found.length > cap);
+      }
+      setLoading(false);
+    };
+
+    void run();
+    return () => { active = false; };
+  }, [table, columns, matchKey, matchInKey, isNull, filtersKey, search, orderBy, ascending, enabled, cap, token]);
+
+  useEffect(() => {
+    if (!enabled) return;
+    const channel = supabase
+      .channel(`matching-${table}`)
+      .on('postgres_changes', { event: '*', schema: 'public', table }, () => reload())
+      .subscribe();
+    return () => { void supabase.removeChannel(channel); };
+  }, [table, enabled, reload]);
+
+  return { rows, loading, error, capped, reload };
 };
 
 // ---- server-side aggregates ----

@@ -6,7 +6,7 @@ import { CustomerForm, NamingSeriesField } from './forms';
 import { ErrorNote } from './Confirm';
 import { Combobox } from './Combobox';
 import { createOrder, newId, orderTotals, updateOrder } from '../lib/mutations';
-import { orderCommission, repCoversZone } from '../lib/commission';
+import { assignableReps, orderCommission, repCoversZone } from '../lib/commission';
 import { searchOptions } from '../lib/queries';
 import type { Customer, DeliveryZone, Order, OrderItem, Product, SalesRep } from '../types';
 
@@ -131,12 +131,15 @@ export const OrderForm: React.FC<{
     setNewCustomerName(null);
   };
 
-  // Reps covering the chosen zone come first; a rep with no zones covers all of
-  // them, and the rest stay selectable rather than disappearing.
+  // Only reps who cover the chosen zone; a rep with no zones covers all of them.
+  // Whoever is already on the order stays listed even if they no longer cover
+  // it, so an existing mismatch is visible instead of silently blanked.
   const zoneName = zone?.name ?? '';
-  const agentOptions = salesReps
-    .filter(rep => rep.active)
-    .sort((a, b) => Number(repCoversZone(b, zoneName)) - Number(repCoversZone(a, zoneName)));
+  const agentOptions = assignableReps(salesReps, zoneName, order?.agentId);
+  const agentOffZone = !!agentId && !repCoversZone(
+    salesReps.find(r => r.id === agentId) ?? { zones: [] },
+    zoneName,
+  );
 
   const rep = salesReps.find(r => r.id === agentId);
 
@@ -370,6 +373,10 @@ export const OrderForm: React.FC<{
             setZoneId(value);
             const picked = zones.find(z => z.id === value);
             if (picked) setDeliveryFee(picked.fee);
+            // Moving the order to a zone the chosen rep does not serve would
+            // leave an assignment the rep picker itself would now refuse.
+            const chosen = salesReps.find(r => r.id === agentId);
+            if (chosen && !repCoversZone(chosen, picked?.name ?? '')) setAgentId('');
           }}
           options={[
             { value: '', label: 'بدون منطقة' },
@@ -382,21 +389,33 @@ export const OrderForm: React.FC<{
           placeholder="اختر منطقة لتعبئة الرسوم"
         />
 
-        <Combobox
-          showLabel
-          label="المندوب"
-          value={agentId}
-          onChange={setAgentId}
-          options={[
-            { value: '', label: 'بدون مندوب' },
-            ...agentOptions.map(option => ({
-              value: option.id,
-              label: option.name,
-              hint: option.zones.length > 0 ? option.zones.join('، ') : 'كل المناطق',
-            })),
-          ]}
-          placeholder="اختر مندوباً"
-        />
+        <div>
+          <Combobox
+            showLabel
+            label="المندوب"
+            value={agentId}
+            onChange={setAgentId}
+            options={[
+              { value: '', label: 'بدون مندوب' },
+              ...agentOptions.map(option => ({
+                value: option.id,
+                label: option.name,
+                hint: option.zones.length > 0 ? option.zones.join('، ') : 'كل المناطق',
+              })),
+            ]}
+            placeholder={zoneName ? 'اختر مندوباً' : 'اختر المنطقة أولاً'}
+          />
+          {agentOffZone && (
+            <p className="text-xs font-bold text-amber-700 mt-1.5">
+              هذا المندوب لا يغطي {zoneName || 'منطقة الطلب'}. اختر مندوباً آخر.
+            </p>
+          )}
+          {!agentOffZone && zoneName && agentOptions.length === 0 && (
+            <p className="text-xs font-bold text-amber-700 mt-1.5">
+              لا يوجد مندوب يغطي {zoneName}.
+            </p>
+          )}
+        </div>
 
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
           <Field label="الخصم (د.ل)">

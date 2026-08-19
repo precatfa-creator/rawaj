@@ -1,24 +1,31 @@
 import React, { useEffect, useState } from 'react';
-import { ChevronDown, ChevronLeft, ChevronRight, Copy, History, Package, Pencil } from 'lucide-react';
-import { Modal } from './Modal';
+import { ChevronDown, ChevronLeft, ChevronRight, Copy, History, Package, Pencil, Sheet } from 'lucide-react';
+import { Modal, ghostButton, primaryButton } from './Modal';
 import { OrderTracking, type StatusEvent } from './OrderTracking';
 import { Combobox } from './Combobox';
 import { money } from './ui';
 import { supabase } from '../db/supabase';
-import { statusLabels } from '../lib/dashboardStats';
-import { orderCommission } from '../lib/commission';
+import {
+  ALL_STATUSES, STATUS_ACCENT_BASE, STATUS_ACCENT_NONE, statusAccent, statusLabels, statusWash,
+} from '../lib/dashboardStats';
+import { assignableReps, orderCommission } from '../lib/commission';
 import { describeActor, useActorNames } from '../lib/actors';
-import { auditChanges, auditSummary } from '../lib/auditText';
+import {
+  AUDIT_PAGES, auditChanges, auditFields, auditSummary, emptyAuditFilter, fieldLabel,
+  isAuditFiltered, matchesAudit, nextAuditPage, type AuditFilter,
+} from '../lib/auditText';
+import { downloadXlsx, type SheetRow } from '../lib/sheet';
 import type { DeliveryZone, Order, OrderStatus, SalesRep, StockKind } from '../types';
 
-const ALL_STATUSES: OrderStatus[] = ['new', 'confirmed', 'processing', 'shipped', 'delivered', 'canceled', 'returned'];
 
 const statusTone: Record<OrderStatus, string> = {
   new: 'bg-blue-50 text-blue-800 border-blue-200',
   confirmed: 'bg-purple-50 text-purple-800 border-purple-200',
-  processing: 'bg-amber-50 text-amber-800 border-amber-200',
+  processing: 'bg-orange-50 text-orange-800 border-orange-200',
   shipped: 'bg-indigo-50 text-indigo-800 border-indigo-200',
+  waiting: 'bg-slate-100 text-slate-700 border-slate-300',
   delivered: 'bg-emerald-50 text-emerald-800 border-emerald-200',
+  delivered_partial: 'bg-teal-50 text-teal-800 border-teal-200',
   canceled: 'bg-rose-50 text-rose-800 border-rose-200',
   returned: 'bg-amber-50 text-amber-900 border-amber-200',
 };
@@ -130,6 +137,40 @@ const statusOf = (row: AuditRow): string | null => {
   return typeof change?.to === 'string' ? change.to : null;
 };
 
+const logFilterClass =
+  'block mt-1 bg-white border border-surface-200 rounded-xl px-2.5 py-2 text-sm font-bold text-surface-900 focus:outline-none focus:ring-2 focus:ring-primary-500/30 focus:border-primary-500';
+
+const LOG_HEADERS = ['التاريخ', 'الإجراء', 'المستخدم', 'الملخص', 'الحقل', 'من', 'إلى'];
+
+/**
+ * The log as a spreadsheet: one row per field changed, not per log entry.
+ *
+ * An entry that touched three fields is three rows, because that is the shape
+ * somebody can filter and pivot. A row that changed nothing readable still gets
+ * a line, so exporting never silently drops an entry the screen showed.
+ */
+const logSheetRows = (
+  rows: AuditRow[],
+  describe: (row: AuditRow) => string,
+  resolve: (field: string, value: unknown) => string | undefined,
+): SheetRow[] =>
+  rows.flatMap(row => {
+    const changes = auditChanges(row.action, row.data, resolve);
+    const base = {
+      'التاريخ': dateTime.format(new Date(row.changedAt)),
+      'الإجراء': ACTION_LABELS[row.action] ?? row.action,
+      'المستخدم': describe(row),
+      'الملخص': auditSummary(row.action, changes, 'الطلب'),
+    };
+    if (changes.length === 0) return [{ ...base, 'الحقل': '', 'من': '', 'إلى': '' }];
+    return changes.map(change => ({
+      ...base,
+      'الحقل': change.label,
+      'من': change.from ?? '—',
+      'إلى': change.to,
+    }));
+  });
+
 /** Same three states everywhere: still loading, refused, or genuinely empty. */
 const RowsState: React.FC<{ rows: unknown[] | null; failed: boolean; empty: string }> = ({ rows, failed, empty }) => {
   if (failed) return <p className="text-sm text-surface-500 py-4">تعذر تحميل البيانات. تحقق من الاتصال وحاول مجدداً.</p>;
@@ -201,6 +242,11 @@ export const OrderDetails: React.FC<{
   const [fullscreen, setFullscreen] = useState(true);
   const [showMovements, setShowMovements] = useState(false);
   const [showLog, setShowLog] = useState(false);
+  const [logFull, setLogFull] = useState(false);
+  const [logFilter, setLogFilter] = useState<AuditFilter>(emptyAuditFilter);
+  const [logVisible, setLogVisible] = useState(AUDIT_PAGES[0]);
+  const [exporting, setExporting] = useState(false);
+  const [exportError, setExportError] = useState('');
   const [copied, setCopied] = useState(false);
   const actors = useActorNames();
 
@@ -208,10 +254,12 @@ export const OrderDetails: React.FC<{
   const zone = zones.find(item => item.id === order?.zoneId);
   const commission = rep ? orderCommission(order?.deliveryFee ?? 0, zone, rep.commission) : null;
 
-  // A status change writes a new audit row, so both readers key off the status
-  // the order is in now: change it from this dialog and the ladder shows the
-  // moment straight away instead of "بلا وقت مسجّل".
-  const version = `${order?.status ?? ''}·${order?.statusReason ?? ''}`;
+  // *Any* write to the order writes an audit row, so the trail and the ledger
+  // are refetched whenever any field changes. Listing the fields by hand is what
+  // left the log stale after a rep change — the key has to be the whole record,
+  // or it falls behind again the next time a column is added. Content, not
+  // identity: a list reload that returns an identical order refetches nothing.
+  const version = JSON.stringify(order ?? {});
   const movements = useRows<MovementRow>(showMovements, order?.id ?? null, loadMovements, version);
   // The ladder needs the trail, so this one is not deferred. Non-admins simply
   // get no rows back, and the ladder falls back to stages without moments.
@@ -222,7 +270,8 @@ export const OrderDetails: React.FC<{
     if (field === 'status' && typeof value === 'string') return statusLabels[value as OrderStatus] ?? value;
     if (field === 'agent_id') return salesReps.find(item => item.id === value)?.name ?? 'بدون مندوب';
     if (field === 'zone_id') return zones.find(item => item.id === value)?.name ?? 'بدون منطقة';
-    if (field === 'items' && Array.isArray(value)) return `${value.length} صنف`;
+    // `items` is deliberately absent: auditValue spells the lines out with their
+    // quantities, and a count here would hide a quantity edit behind "1 صنف".
     return undefined;
   };
 
@@ -239,8 +288,54 @@ export const OrderDetails: React.FC<{
     setFullscreen(true);
     setShowMovements(false);
     setShowLog(false);
+    setLogFull(false);
+    setLogFilter(emptyAuditFilter);
+    setLogVisible(AUDIT_PAGES[0]);
+    setExportError('');
     setCopied(false);
   }, [order?.id]);
+
+  // Filtering happens over the whole trail, and the page size only decides how
+  // much of the result is painted. Export follows the filter, not the page: what
+  // somebody narrowed to is what they mean to take away.
+  const auditRows = audit.rows ?? [];
+  const filteredAudit = auditRows.filter(row => matchesAudit(row, logFilter));
+  const shownAudit = filteredAudit.slice(0, logVisible);
+
+  /** Only the actions, fields and people this order's trail actually contains. */
+  const actionChoices = [...new Set(auditRows.map(row => row.action))];
+  const fieldChoices = [...new Set(auditRows.flatMap(row => auditFields(row.action, row.data)))]
+    .sort((a, b) => fieldLabel(a).localeCompare(fieldLabel(b), 'ar'));
+  const actorChoices = [...new Map(
+    auditRows.map(row => [row.actorId ?? '', describeActor(row, actors)]),
+  )];
+
+  const setFilter = (patch: Partial<AuditFilter>) => {
+    setLogFilter(current => ({ ...current, ...patch }));
+    // A narrower list starts at the top; keeping a deep page would open on rows
+    // the new filter may not even have.
+    setLogVisible(AUDIT_PAGES[0]);
+  };
+
+  const exportLog = async () => {
+    if (!order || !filteredAudit.length) return;
+    setExporting(true);
+    setExportError('');
+    try {
+      await downloadXlsx(
+        `order-${order.orderNumber}-log.xlsx`,
+        LOG_HEADERS,
+        logSheetRows(filteredAudit, row => describeActor(row, actors), resolveValue),
+      );
+    } catch (error) {
+      // exceljs is a ~940 kB lazy chunk; on a bad connection the import is what
+      // fails, and a silent dead button is worse than saying so.
+      console.error('Failed to export the order log', error);
+      setExportError('تعذّر إنشاء الملف. حاول مجدداً.');
+    } finally {
+      setExporting(false);
+    }
+  };
 
   const copyNumber = async () => {
     if (!order) return;
@@ -264,7 +359,7 @@ export const OrderDetails: React.FC<{
         <div className="@container space-y-5 max-w-[80rem] mx-auto">
           {/* Identity: who it is for, what it comes to, and the controls that
               change it — the three things somebody opens an order to do. */}
-          <div className="grid gap-4 @2xl:grid-cols-[minmax(0,1fr)_auto] items-start rounded-2xl border border-surface-200 bg-white p-4">
+          <div className={`grid gap-4 @2xl:grid-cols-[minmax(0,1fr)_auto] items-start rounded-2xl border border-surface-200 bg-white p-4 ${STATUS_ACCENT_BASE} ${statusAccent[order.status] ?? STATUS_ACCENT_NONE} ${statusWash[order.status] ?? ''}`}>
             <div className="min-w-0 space-y-3">
               <div className="flex flex-wrap items-center gap-2">
                 <button
@@ -293,7 +388,9 @@ export const OrderDetails: React.FC<{
 
               <div>
                 <p className="text-2xl font-black text-surface-900 truncate">{order.customerName}</p>
-                <p className="text-sm text-surface-500 mt-0.5">
+                {/* surface-600, not 500: this line sits on the status wash, where
+                    the lighter grey drops to 4.2:1 against the tint. */}
+                <p className="text-sm text-surface-600 mt-0.5">
                   {zone?.name ?? 'بدون منطقة'} · أُنشئ {dateOnly.format(new Date(order.createdAt))}
                   {order.deliveryDate && ` · التسليم ${dateOnly.format(new Date(order.deliveryDate))}`}
                 </p>
@@ -318,7 +415,10 @@ export const OrderDetails: React.FC<{
                     onChange={value => onAgent(order.id, value)}
                     options={[
                       { value: '', label: 'بدون مندوب' },
-                      ...salesReps.filter(item => item.active || item.id === order.agentId).map(item => ({
+                      // Only reps who serve this order's zone. Whoever is on it
+                      // already stays listed even if they no longer cover it, so
+                      // the field shows the truth rather than blanking.
+                      ...assignableReps(salesReps, zone?.name ?? '', order.agentId).map(item => ({
                         value: item.id,
                         label: item.name,
                         hint: item.zones.length > 0 ? item.zones.join('، ') : 'كل المناطق',
@@ -351,10 +451,14 @@ export const OrderDetails: React.FC<{
             </div>
 
             {/* The stamped total: the one number the whole document is about. */}
-            <div className="rounded-2xl bg-surface-900 text-white px-5 py-4 @2xl:min-w-52">
-              <p className="text-xs font-bold text-white/60">الإجمالي</p>
+            {/* The app's own teal rather than near-black: the total is the one
+                number the document is about, and it should read as part of the
+                system, not as a foreign block. white/70 for the labels — /60
+                measures 3.84:1 on this ground, under the 4.5 floor. */}
+            <div className="rounded-2xl bg-gradient-to-br from-primary-700 to-primary-900 text-white px-5 py-4 @2xl:min-w-52 shadow-sm shadow-primary-900/20">
+              <p className="text-xs font-bold text-white/70">الإجمالي</p>
               <p className="text-3xl font-black tabular-nums mt-1">{money(order.total)}</p>
-              <p className="text-xs text-white/60 mt-1 tabular-nums">
+              <p className="text-xs text-white/70 mt-1 tabular-nums">
                 {units} قطعة · {order.items.length} صنف
               </p>
             </div>
@@ -439,58 +543,164 @@ export const OrderDetails: React.FC<{
             <aside className="space-y-5 min-w-0">
               <OrderTracking order={order} rep={rep} zone={zone} events={events} />
 
-              <Drawer
-                title="سجل التغييرات"
-                icon={<History size={16} className="text-surface-500" />}
-                open={showLog}
-                onToggle={setShowLog}
+              {/* The log reads badly in a narrow column — every entry is a
+                  three-part diff — so it opens as its own sheet instead. */}
+              <button
+                type="button"
+                onClick={() => setShowLog(true)}
+                className="w-full flex items-center gap-2 rounded-2xl border border-surface-200 bg-white px-4 py-3 font-black text-sm text-surface-900 hover:bg-surface-50 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500"
               >
-                {/* Non-admins are not refused here, they simply see nothing: the
-                    audit policy filters the rows away, so an empty list has two
-                    meanings and the message has to carry both. */}
-                <RowsState
-                  rows={audit.rows}
-                  failed={audit.failed}
-                  empty="لا توجد تغييرات مسجّلة على هذا الطلب، أو أن السجل متاح لمديري النظام فقط."
-                />
-                <ul className="space-y-2">
-                  {audit.rows?.map(row => {
-                    const changes = auditChanges(row.action, row.data, resolveValue);
-                    return (
-                      <li key={row.id} className="border border-surface-200 rounded-xl p-3 space-y-1.5">
-                        <div className="flex items-center gap-2">
-                          <span className="text-xs font-bold text-surface-700 bg-surface-100 border border-surface-200 rounded-lg px-2 py-1">
-                            {ACTION_LABELS[row.action] ?? row.action}
-                          </span>
-                          <span className="text-xs text-surface-500 truncate">{describeActor(row, actors)}</span>
-                          <span className="text-xs text-surface-400 tabular-nums ms-auto whitespace-nowrap">
-                            {dateTime.format(new Date(row.changedAt))}
-                          </span>
-                        </div>
-                        <p className="text-sm font-bold text-surface-900">
-                          {auditSummary(row.action, changes, 'الطلب')}
-                        </p>
-                        {row.action === 'UPDATE' && (
-                          <ul className="text-xs text-surface-600 space-y-0.5">
-                            {changes.map(change => (
-                              <li key={change.field} className="flex flex-wrap items-baseline gap-x-1.5">
-                                <span className="font-bold text-surface-700">{change.label}:</span>
-                                <span className="text-surface-400 line-through">{change.from}</span>
-                                <span aria-hidden>←</span>
-                                <span className="font-bold text-surface-900">{change.to}</span>
-                              </li>
-                            ))}
-                          </ul>
-                        )}
-                      </li>
-                    );
-                  })}
-                </ul>
-              </Drawer>
+                <History size={16} className="text-surface-500" />
+                سجل التغييرات
+                {audit.rows && (
+                  <span className="text-xs font-bold text-surface-500 tabular-nums">({audit.rows.length})</span>
+                )}
+                <ChevronLeft size={16} className="ms-auto text-surface-400" />
+              </button>
             </aside>
           </div>
         </div>
       )}
+
+      <Modal
+        open={showLog && !!order}
+        wide
+        fullscreen={logFull}
+        onToggleFullscreen={() => setLogFull(current => !current)}
+        title={order ? `سجل التغييرات · ${order.orderNumber}` : 'سجل التغييرات'}
+        onClose={() => setShowLog(false)}
+        footer={
+          <>
+            <button
+              type="button"
+              onClick={() => void exportLog()}
+              disabled={exporting || filteredAudit.length === 0}
+              className={primaryButton}
+            >
+              <Sheet size={16} />
+              {exporting
+                ? 'جارٍ التجهيز…'
+                : `تصدير Excel (${filteredAudit.length})`}
+            </button>
+            <button type="button" onClick={() => setShowLog(false)} className={ghostButton}>إغلاق</button>
+            <span role="status" className="text-sm font-bold text-rose-700 self-center">{exportError}</span>
+          </>
+        }
+      >
+        {/* Non-admins are not refused here, they simply see nothing: the audit
+            policy filters the rows away, so an empty list has two meanings and
+            the message has to carry both. */}
+        <RowsState
+          rows={audit.rows}
+          failed={audit.failed}
+          empty="لا توجد تغييرات مسجّلة على هذا الطلب، أو أن السجل متاح لمديري النظام فقط."
+        />
+
+        {auditRows.length > 0 && (
+          <div className="flex flex-wrap items-end gap-2 pb-3 mb-3 border-b border-surface-200">
+            <label className="text-xs font-bold text-surface-600">
+              الإجراء
+              <select
+                value={logFilter.action}
+                onChange={event => setFilter({ action: event.target.value })}
+                className={logFilterClass}
+              >
+                <option value="">الكل</option>
+                {actionChoices.map(action => (
+                  <option key={action} value={action}>{ACTION_LABELS[action] ?? action}</option>
+                ))}
+              </select>
+            </label>
+            <label className="text-xs font-bold text-surface-600">
+              الحقل
+              <select
+                value={logFilter.field}
+                onChange={event => setFilter({ field: event.target.value })}
+                className={logFilterClass}
+              >
+                <option value="">الكل</option>
+                {fieldChoices.map(field => (
+                  <option key={field} value={field}>{fieldLabel(field)}</option>
+                ))}
+              </select>
+            </label>
+            <label className="text-xs font-bold text-surface-600">
+              المستخدم
+              <select
+                value={logFilter.actor}
+                onChange={event => setFilter({ actor: event.target.value })}
+                className={logFilterClass}
+              >
+                <option value="">الكل</option>
+                {actorChoices.map(([id, name]) => (
+                  <option key={id} value={id}>{name}</option>
+                ))}
+              </select>
+            </label>
+            {isAuditFiltered(logFilter) && (
+              <button
+                type="button"
+                onClick={() => { setLogFilter(emptyAuditFilter); setLogVisible(AUDIT_PAGES[0]); }}
+                className="text-xs font-bold text-primary-800 hover:text-primary-900 rounded-lg px-2 py-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500"
+              >
+                مسح الفلاتر
+              </button>
+            )}
+            <span className="text-xs text-surface-500 tabular-nums ms-auto self-center">
+              {filteredAudit.length} من {auditRows.length}
+            </span>
+          </div>
+        )}
+
+        {auditRows.length > 0 && filteredAudit.length === 0 && (
+          <p className="text-sm text-surface-500 py-4">لا تغييرات تطابق الفلاتر المختارة.</p>
+        )}
+
+        <ul className="space-y-2">
+          {shownAudit.map(row => {
+            const changes = auditChanges(row.action, row.data, resolveValue);
+            return (
+              <li key={row.id} className="border border-surface-200 rounded-xl p-3 space-y-1.5">
+                <div className="flex items-center gap-2">
+                  <span className="text-xs font-bold text-surface-700 bg-surface-100 border border-surface-200 rounded-lg px-2 py-1">
+                    {ACTION_LABELS[row.action] ?? row.action}
+                  </span>
+                  <span className="text-xs text-surface-500 truncate">{describeActor(row, actors)}</span>
+                  <span className="text-xs text-surface-400 tabular-nums ms-auto whitespace-nowrap">
+                    {dateTime.format(new Date(row.changedAt))}
+                  </span>
+                </div>
+                <p className="text-sm font-bold text-surface-900">
+                  {auditSummary(row.action, changes, 'الطلب')}
+                </p>
+                {row.action === 'UPDATE' && (
+                  <ul className="text-xs text-surface-600 space-y-0.5">
+                    {changes.map(change => (
+                      <li key={change.field} className="flex flex-wrap items-baseline gap-x-1.5">
+                        <span className="font-bold text-surface-700">{change.label}:</span>
+                        <span className="text-surface-400 line-through">{change.from}</span>
+                        <span aria-hidden>←</span>
+                        <span className="font-bold text-surface-900">{change.to}</span>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </li>
+            );
+          })}
+        </ul>
+
+        {filteredAudit.length > shownAudit.length && (
+          <button
+            type="button"
+            onClick={() => setLogVisible(nextAuditPage)}
+            className="w-full mt-3 rounded-xl border border-surface-200 bg-surface-50 px-4 py-2.5 text-sm font-bold text-surface-700 hover:bg-surface-100 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500"
+          >
+            عرض المزيد ({Math.min(nextAuditPage(shownAudit.length), filteredAudit.length) - shownAudit.length}
+            {' '}من {filteredAudit.length - shownAudit.length})
+          </button>
+        )}
+      </Modal>
     </Modal>
   );
 };

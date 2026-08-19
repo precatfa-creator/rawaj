@@ -1,35 +1,47 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useAppStore } from '../store';
 import { supabase } from '../db/supabase';
-import { Plus, Search, Eye, Truck, CheckCircle2, ShoppingCart, Trash2, X, Pencil, SlidersHorizontal, Undo2, RefreshCw } from 'lucide-react';
-import { motion } from 'motion/react';
+import {
+  Plus, Search, Eye, Truck, CheckCircle2, ShoppingCart, Trash2, X, Pencil,
+  SlidersHorizontal, RefreshCw, Rows3, Images, ListTree,
+} from 'lucide-react';
+import { motion, useReducedMotion } from 'motion/react';
 import { OrderStatus } from '../types';
-import { statusLabels } from '../lib/dashboardStats';
-import { matchingIds, PAGE_SIZE, useDimension, useOrderTotals, usePagedList, type Narrowing } from '../lib/queries';
+import {
+  ALL_STATUSES, STATUS_ACCENT_BASE, STATUS_ACCENT_NONE, statusAccent, statusLabels,
+} from '../lib/dashboardStats';
+import {
+  matchingIds, PAGE_SIZE, useDimension, useMatchingRows, useOrderTotals, usePagedList,
+  type Narrowing,
+} from '../lib/queries';
 import {
   filterParams, filtersFromParams, isFiltered, orderRangeFilters, type OrderFilters,
 } from '../lib/orderFilters';
 import {
-  deleteOrders, orderStatusesOf, restoreOrderStatuses, setOrderAgent, setOrderStatus,
-  type OrderStatusRow,
+  deleteOrders, orderStatusesOf, setOrderAgent, setOrderStatus,
+  setPartialDelivery,
 } from '../lib/mutations';
 import { orderBulk } from '../lib/bulk';
+import { describeOrderItems } from '../lib/auditText';
+import { repCoversZone } from '../lib/commission';
+import { announceDelivery } from '../lib/celebrate';
+import { groupOrders, type OrderGroupBy } from '../lib/orderViews';
 import { Confirm, ErrorNote, ReasonPrompt } from '../components/Confirm';
 import { OrderDetails } from '../components/orderDetails';
 import { OrderForm } from '../components/orderForms';
+import { PartialDeliveryPrompt } from '../components/PartialDelivery';
 import { Combobox } from '../components/Combobox';
 import { BulkBar } from '../components/BulkBar';
-import { money, Pagination, quietButton } from '../components/ui';
+import { money, Pagination, quietButton, Thumb } from '../components/ui';
 import type { Order } from '../types';
 import type { PagedProps } from '../lib/route';
 
-const ALL_STATUSES: OrderStatus[] = ['new', 'confirmed', 'processing', 'shipped', 'delivered', 'canceled', 'returned'];
 
 /** The three a fulfillment shift applies all day; the rest live in the dropdown. */
 const QUICK_STATUSES: OrderStatus[] = ['processing', 'shipped', 'delivered'];
 
 /** Statuses that mean the order is still somebody's job. */
-const OPEN_STATUSES = new Set<OrderStatus>(['new', 'confirmed', 'processing', 'shipped']);
+const OPEN_STATUSES = new Set<OrderStatus>(['new', 'confirmed', 'processing', 'shipped', 'waiting']);
 
 /** Days an open order may sit before the list starts calling it out. */
 const STALE_DAYS = 3;
@@ -48,6 +60,14 @@ const HALT_PROMPTS: Partial<Record<OrderStatus, { title: string; message: string
     confirmLabel: 'تسجيل المرتجع',
     tone: 'primary',
   },
+  // A hold is not an ending, but it is the same kind of change: the row
+  // afterwards says the order stopped moving and not why.
+  waiting: {
+    title: 'تعليق الطلب',
+    message: 'سيُسجَّل سبب الانتظار مع الطلب وفي سجل التغييرات.',
+    confirmLabel: 'تعليق الطلب',
+    tone: 'primary',
+  },
 };
 
 /** Ceiling on "select every result" — see `matchingIds`. */
@@ -55,18 +75,37 @@ const SELECT_ALL_CAP = 2000;
 
 const PAGE_SIZES = [24, 50, 100];
 const PAGE_SIZE_KEY = 'orders.pageSize';
+const GROUP_CAP = 2000;
 
-/** How long the undo bar stays up after a status change. */
-const UNDO_MS = 12000;
+type OrderView = 'list' | 'images' | 'grouped';
+
+const GROUP_OPTIONS: Array<{ value: OrderGroupBy; label: string }> = [
+  { value: 'status', label: 'الحالة' },
+  { value: 'customer', label: 'العميل' },
+  { value: 'item', label: 'المنتج' },
+  { value: 'rep', label: 'المندوب' },
+];
 
 const statusStyles: Record<OrderStatus, string> = {
   new: 'bg-blue-50 text-blue-800 border-blue-200',
   confirmed: 'bg-purple-50 text-purple-800 border-purple-200',
-  processing: 'bg-amber-50 text-amber-800 border-amber-200',
+  processing: 'bg-orange-50 text-orange-800 border-orange-200',
   shipped: 'bg-indigo-50 text-indigo-800 border-indigo-200',
+  waiting: 'bg-slate-100 text-slate-700 border-slate-300',
   delivered: 'bg-emerald-50 text-emerald-800 border-emerald-200',
+  delivered_partial: 'bg-teal-50 text-teal-800 border-teal-200',
   canceled: 'bg-rose-50 text-rose-800 border-rose-200',
   returned: 'bg-amber-50 text-amber-900 border-amber-200',
+};
+
+/**
+ * The active tab's count chip, tinted by the status it counts. Reuses
+ * `statusStyles` so a status never wears two different colours on one page;
+ * "all" has no status colour of its own, so it takes the neutral inverse.
+ */
+const statusBadge: Record<'all' | OrderStatus, string> = {
+  all: 'bg-surface-900 text-white',
+  ...statusStyles,
 };
 
 const ORDER_COLUMNS =
@@ -113,16 +152,32 @@ export const Orders: React.FC<OrdersProps> = ({ page, onPage, recordId, onRecord
   const [confirmDelete, setConfirmDelete] = useState<string[] | null>(null);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
-  const [undo, setUndo] = useState<OrderStatusRow[] | null>(null);
   const [halting, setHalting] = useState<{ ids: string[]; status: OrderStatus } | null>(null);
+  const [partial, setPartial] = useState<Order | null>(null);
+
+  const still = useReducedMotion();
+
 
   const searchRef = useRef<HTMLInputElement>(null);
-  const bodyRef = useRef<HTMLTableSectionElement>(null);
+  const bodyRef = useRef<HTMLElement | null>(null);
+  const captureBody = (node: HTMLElement | null) => { bodyRef.current = node; };
   /** Anchor for shift-click range selection. */
   const anchorRef = useRef<number | null>(null);
 
   const active: OrderFilters = { ...filtersFromParams(params, activeStoreId), storeId: activeStoreId };
   const sort = params.sort === 'oldest' ? 'oldest' : 'newest';
+  const view: OrderView = params.view === 'images' || params.view === 'grouped' ? params.view : 'list';
+  const groupBy: OrderGroupBy = GROUP_OPTIONS.some(option => option.value === params.group)
+    ? params.group as OrderGroupBy
+    : 'status';
+  /**
+   * How many filters are narrowing the list, for the badge on the collapsed
+   * panel. Status has its own toggle group above, so it is not counted twice.
+   */
+  const activeFilterCount = [
+    active.agentId, active.zoneId, active.search, active.from, active.to,
+    active.minTotal, active.maxTotal,
+  ].filter(Boolean).length;
 
   // Remembered per browser so an operator who works 100 rows at a time is not
   // set back to 24 every morning; a link that carries a size still wins.
@@ -136,12 +191,18 @@ export const Orders: React.FC<OrdersProps> = ({ page, onPage, recordId, onRecord
   /** Page-level parameters: sort and size. Any change resets the offset. */
   const setParam = (patch: Record<string, string>) => onParams({ ...params, ...patch });
 
+  /** View state is linkable, just like the filters it presents. */
+  const viewParams = {
+    view: view === 'list' ? '' : view,
+    group: view === 'grouped' && groupBy !== 'status' ? groupBy : '',
+  };
+
   /**
    * A filter change rewrites the whole filter half of the query string, so a
    * cleared filter leaves the URL instead of lingering as `status=`.
    */
   const set = <K extends keyof OrderFilters>(field: K, value: OrderFilters[K]) =>
-    onParams({ sort: params.sort ?? '', size: params.size ?? '', ...filterParams({ ...active, [field]: value }) });
+    onParams({ sort: params.sort ?? '', size: params.size ?? '', ...viewParams, ...filterParams({ ...active, [field]: value }) });
 
   // The search box types faster than Postgres can count, so the URL — and with
   // it the query — is only written once typing settles.
@@ -188,7 +249,25 @@ export const Orders: React.FC<OrdersProps> = ({ page, onPage, recordId, onRecord
     // count is a full scan — the planner's estimate is what a page bar needs.
     count: 'estimated',
   });
-  const visibleOrders = list.rows;
+  const pageOrders = list.rows;
+
+  // Grouping a single pagination page would split one customer or product into
+  // unrelated sections. Fetch the complete filtered result for this view, with
+  // the same safety ceiling used by "select every result".
+  const groupedResult = useMatchingRows<Order>({
+    table: 'orders',
+    columns: ORDER_COLUMNS,
+    ...narrowing,
+    orderBy: 'created_at',
+    ascending: sort === 'oldest',
+    enabled: view === 'grouped',
+    cap: GROUP_CAP,
+  });
+  const visibleOrders = view === 'grouped' ? groupedResult.rows : pageOrders;
+  const groupedOrders = useMemo(
+    () => groupOrders(groupedResult.rows, groupBy, salesReps, statusLabels),
+    [groupedResult.rows, groupBy, salesReps],
+  );
 
   // A link can point at an order the current page or filters do not include, so
   // the one the URL names is fetched on its own when the list does not hold it.
@@ -275,7 +354,22 @@ export const Orders: React.FC<OrdersProps> = ({ page, onPage, recordId, onRecord
     setPendingId(null);
     if (!result.ok) { setError(result.message ?? ''); return result; }
     setSelected(new Set());
-    setUndo(previous.filter(row => row.status !== status));
+
+    // Only orders that actually crossed into a full delivery, so re-saving an
+    // order already delivered does not throw a second party for the same event.
+    if (status === 'delivered' && activeStoreId) {
+      previous
+        .filter(row => row.status !== 'delivered')
+        .map(row => visibleOrders.find(order => order.id === row.id))
+        .forEach(order => {
+          if (!order) return;
+          void announceDelivery(activeStoreId, {
+            orderNumber: order.orderNumber,
+            customerName: order.customerName,
+            total: order.total,
+          });
+        });
+    }
     return result;
   };
 
@@ -285,31 +379,44 @@ export const Orders: React.FC<OrdersProps> = ({ page, onPage, recordId, onRecord
    * bulk bar and the details dialog — so the question cannot be walked around.
    */
   const applyStatus = async (ids: string[], status: OrderStatus) => {
+    // A partial delivery is per-order and per-line, so it cannot be applied to a
+    // selection: which lines arrived is a different answer for every order.
+    if (status === 'delivered_partial') {
+      const [only] = ids;
+      const order = ids.length === 1 ? visibleOrders.find(row => row.id === only) ?? linkedOrder : null;
+      if (!order) {
+        setError('حدّد طلباً واحداً لتسجيل تسليم جزئي — الأصناف التي وصلت تختلف من طلب لآخر.');
+        return;
+      }
+      setPartial(order);
+      return;
+    }
     if (HALT_PROMPTS[status]) { setHalting({ ids, status }); return; }
     await writeStatus(ids, status);
   };
 
-  const applyUndo = async () => {
-    if (!undo) return;
-    setPendingId('bulk');
-    const result = await restoreOrderStatuses(undo);
-    setPendingId(null);
-    setUndo(null);
-    if (!result.ok) setError(result.message ?? '');
-    else setNotice('أُعيدت الحالات السابقة.');
-  };
 
-  useEffect(() => {
-    if (!undo || undo.length === 0) return;
-    const timer = setTimeout(() => setUndo(null), UNDO_MS);
-    return () => clearTimeout(timer);
-  }, [undo]);
 
   /**
    * Reassignment after the fact, which is the normal case: a rep calls in sick,
    * or leaves and their orders need a new owner. Without this the rep chosen
    * while composing the order would be the only one it could ever have.
    */
+  /**
+   * A rep taking a batch has to serve every zone in it — the intersection of the
+   * selection, not the union. Orders with no zone place no demand on the list,
+   * and an empty selection leaves every active rep offered.
+   */
+  const selectedZoneNames = [...new Set(
+    [...selected]
+      .map(id => visibleOrders.find(row => row.id === id)?.zoneId)
+      .map(zoneId => zones.find(zone => zone.id === zoneId)?.name ?? '')
+      .filter(Boolean),
+  )];
+  const bulkAgents = salesReps.filter(
+    rep => rep.active && selectedZoneNames.every(name => repCoversZone(rep, name)),
+  );
+
   const applyAgent = async (ids: string[], agentId: string) => {
     setPendingId('bulk');
     setError('');
@@ -332,7 +439,7 @@ export const Orders: React.FC<OrdersProps> = ({ page, onPage, recordId, onRecord
         return;
       }
       // A dialog owns the keyboard while it is open.
-      if (recordId || creating || editing || confirmDelete || halting) return;
+      if (recordId || creating || editing || confirmDelete || halting || partial) return;
 
       if (event.key === '/') { event.preventDefault(); searchRef.current?.focus(); return; }
 
@@ -348,7 +455,11 @@ export const Orders: React.FC<OrdersProps> = ({ page, onPage, recordId, onRecord
       }
       if (event.key === 'x' && current >= 0) {
         event.preventDefault();
-        selectRow(current, event.shiftKey);
+        const id = rows[current]?.dataset.orderId;
+        if (!id) return;
+        const orderIndex = visibleOrders.findIndex(order => order.id === id);
+        if (view !== 'grouped' && orderIndex >= 0) selectRow(orderIndex, event.shiftKey);
+        else toggle(id);
       }
     };
     window.addEventListener('keydown', onKey);
@@ -359,7 +470,96 @@ export const Orders: React.FC<OrdersProps> = ({ page, onPage, recordId, onRecord
     'inline-flex items-center justify-center min-w-11 min-h-11 md:min-w-0 md:min-h-0 p-2.5 md:p-1.5 rounded-lg transition-colors disabled:opacity-40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500';
 
   const pageTotal = visibleOrders.reduce((sum, order) => sum + order.total, 0);
-  const skeleton = list.loading && visibleOrders.length === 0;
+  const skeleton = (view === 'grouped' ? groupedResult.loading : list.loading) && visibleOrders.length === 0;
+
+  const renderStatusControl = (order: Order, busy: boolean, className = 'min-w-32') => (
+    <Combobox
+      size="sm"
+      label={`حالة الطلب ${order.orderNumber}`}
+      value={order.status}
+      disabled={busy}
+      onChange={value => applyStatus([order.id], value as OrderStatus)}
+      options={ALL_STATUSES.map(status => ({ value: status, label: statusLabels[status] }))}
+      tone={`border ${statusStyles[order.status]}`}
+      className={className}
+    />
+  );
+
+  const renderOrderActions = (order: Order, busy: boolean) => (
+    <div className="flex flex-wrap items-center gap-1 md:gap-2">
+      <button
+        onClick={() => onRecord(order.id)}
+        className={`${actionButton} text-surface-500 hover:text-primary-700 hover:bg-primary-50`}
+        aria-label={`عرض تفاصيل ${order.orderNumber}`} title="عرض التفاصيل"
+      >
+        <Eye size={18} />
+      </button>
+      <button
+        onClick={() => setEditing(order)}
+        disabled={busy}
+        className={`${actionButton} text-surface-500 hover:text-primary-700 hover:bg-primary-50`}
+        aria-label={`تعديل ${order.orderNumber}`} title="تعديل الطلب"
+      >
+        <Pencil size={18} />
+      </button>
+      <button
+        onClick={() => applyStatus([order.id], 'shipped')}
+        disabled={busy || order.status === 'shipped'}
+        className={`${actionButton} text-surface-500 hover:text-indigo-700 hover:bg-indigo-50`}
+        aria-label={`تغيير ${order.orderNumber} إلى ${statusLabels.shipped}`} title={`تغيير إلى ${statusLabels.shipped}`}
+      >
+        <Truck size={18} />
+      </button>
+      <button
+        onClick={() => applyStatus([order.id], 'delivered')}
+        disabled={busy || order.status === 'delivered'}
+        className={`${actionButton} text-surface-500 hover:text-emerald-700 hover:bg-emerald-50`}
+        aria-label={`تغيير ${order.orderNumber} إلى ${statusLabels.delivered}`} title={`تغيير إلى ${statusLabels.delivered}`}
+      >
+        <CheckCircle2 size={18} />
+      </button>
+      <button
+        onClick={() => setConfirmDelete([order.id])}
+        disabled={busy}
+        className={`${actionButton} text-surface-500 hover:text-rose-700 hover:bg-rose-50`}
+        aria-label={`حذف ${order.orderNumber}`} title="حذف الطلب"
+      >
+        <Trash2 size={18} />
+      </button>
+    </div>
+  );
+
+  const renderOrderImages = (order: Order) => {
+    const shown = order.items.slice(0, 4);
+    if (shown.length === 0) {
+      return (
+        <div className="h-44 grid place-items-center bg-surface-100 text-surface-400">
+          <ShoppingCart size={38} />
+        </div>
+      );
+    }
+    return (
+      <div className="relative h-44 grid grid-cols-2 grid-rows-2 gap-1 bg-surface-100 p-1" aria-label={describeOrderItems(order.items)}>
+        {shown.map((item, index) => (
+          <Thumb
+            key={`${item.productId}-${item.size ?? ''}-${index}`}
+            src={item.image}
+            name={item.productName}
+            fit="contain"
+            textClass="text-2xl"
+            className={`w-full h-full bg-white ${
+              shown.length === 1 ? 'col-span-2 row-span-2' : shown.length === 2 ? 'row-span-2' : index === 0 && shown.length === 3 ? 'row-span-2' : ''
+            }`}
+          />
+        ))}
+        {order.items.length > 4 && (
+          <span className="absolute bottom-2 end-2 rounded-lg bg-surface-900/85 px-2 py-1 text-xs font-black text-white" dir="ltr">
+            +{order.items.length - 4}
+          </span>
+        )}
+      </div>
+    );
+  };
 
   return (
     <div className="space-y-6">
@@ -379,42 +579,65 @@ export const Orders: React.FC<OrdersProps> = ({ page, onPage, recordId, onRecord
 
       {/* A failed read used to print the empty state, which reads as "no
           orders" when it means "the query did not run". */}
-      {(error || list.error) && <ErrorNote message={error || list.error} />}
+      {(error || list.error || (view === 'grouped' ? groupedResult.error : '')) && (
+        <ErrorNote message={error || list.error || groupedResult.error} />
+      )}
       {notice && (
         <p role="status" className="rounded-xl border border-primary-200 bg-primary-50 text-primary-900 font-bold text-sm p-3">
           {notice}
         </p>
       )}
 
-      {/* Status tabs */}
-      <div className="flex overflow-x-auto no-scrollbar gap-2 pb-2">
+      {/* A toggle group, not a row of loose buttons: one of these is always in
+          effect, so the set reads as one control with a position in it. The
+          indicator slides between positions rather than blinking, which is what
+          makes the movement legible as "the same thing moved". */}
+      <div
+        role="group"
+        aria-label="تصفية حسب الحالة"
+        className="flex overflow-x-auto no-scrollbar gap-1 p-1 rounded-2xl border border-surface-200/80 bg-surface-100/70"
+      >
         {(['all', ...ALL_STATUSES] as const).map(status => {
           const value = status === 'all' ? '' : status;
           const count = status === 'all' ? totalOrders : (statusCounts.get(status) ?? 0);
+          const on = active.status === value;
           return (
             <button
               key={status}
               onClick={() => set('status', value)}
-              aria-pressed={active.status === value}
-              className={`whitespace-nowrap px-4 py-2 rounded-xl font-bold text-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 ${
-                active.status === value ? 'bg-surface-900 text-white' : 'bg-surface-100 text-surface-600 hover:bg-surface-200'
+              aria-pressed={on}
+              className={`relative shrink-0 whitespace-nowrap rounded-xl px-3.5 py-2 text-sm font-bold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 ${
+                on ? 'text-surface-900' : count === 0 ? 'text-surface-400 hover:text-surface-600' : 'text-surface-600 hover:text-surface-900'
               }`}
             >
-              {status === 'all' ? 'الكل' : statusLabels[status]} ({count})
+              {on && (
+                <motion.span
+                  aria-hidden
+                  layoutId="statusPill"
+                  transition={{ type: 'spring', stiffness: 400, damping: 34, duration: still ? 0 : undefined }}
+                  className="absolute inset-0 rounded-xl bg-white shadow-sm shadow-surface-900/10 ring-1 ring-surface-200"
+                />
+              )}
+              <span className="relative flex items-center gap-2">
+                {status === 'all' ? 'الكل' : statusLabels[status]}
+                {/* The count is a badge, not "(3)": at a glance it reads as a
+                    quantity attached to the tab rather than part of its name. */}
+                <span
+                  className={`inline-flex items-center justify-center min-w-5 h-5 px-1.5 rounded-md text-[11px] tabular-nums transition-colors ${
+                    on ? statusBadge[status] : 'bg-surface-200/80 text-surface-600'
+                  }`}
+                >
+                  {count}
+                </span>
+              </span>
             </button>
           );
         })}
       </div>
 
-      <BulkBar
-        spec={bulkSpec}
-        title="استيراد وتصدير الطلبات"
-        hint="يقبل Excel و CSV وملفات Google Sheets المصدَّرة. التصدير يتبع التصفية المعروضة الآن. الطلب الموجود يُحدَّث، والجديد يُنشأ بنفس قواعد المخزون — المطابقة بالمعرّف ثم برقم الطلب. عمود المنتجات بالصيغة: SKU * الكمية @ السعر # المقاس، ويُفصل بين المنتجات بفاصلة منقوطة. العميل يجب أن يكون موجوداً مسبقاً، والإجمالي يُحسب من السطور."
-      />
-
       <div className="glass-card rounded-2xl">
-        <div className="p-4 border-b border-surface-200/50 flex flex-col md:flex-row gap-4">
-          <div className="flex-1 relative">
+        <div className="p-4 border-b border-surface-200/50 flex flex-col md:flex-row md:flex-wrap md:items-center gap-3">
+          <div className="flex-1 min-w-64 relative">
             <div className="absolute inset-y-0 right-0 pr-3 flex items-center pointer-events-none text-surface-400">
               <Search size={20} />
             </div>
@@ -440,39 +663,90 @@ export const Orders: React.FC<OrdersProps> = ({ page, onPage, recordId, onRecord
             ]}
             className="md:w-44"
           />
-          <Combobox
-            label="عدد الصفوف"
-            value={String(pageSize)}
-            onChange={value => {
-              localStorage.setItem(PAGE_SIZE_KEY, value);
-              setParam({ size: value === String(PAGE_SIZE) ? '' : value });
-            }}
-            options={PAGE_SIZES.map(size => ({ value: String(size), label: `${size} صف` }))}
-            className="md:w-32"
-          />
+          {view !== 'grouped' && (
+            <Combobox
+              label="عدد الصفوف"
+              value={String(pageSize)}
+              onChange={value => {
+                localStorage.setItem(PAGE_SIZE_KEY, value);
+                setParam({ size: value === String(PAGE_SIZE) ? '' : value });
+              }}
+              options={PAGE_SIZES.map(size => ({ value: String(size), label: `${size} صف` }))}
+              className="md:w-32"
+            />
+          )}
+          <div role="group" aria-label="طريقة عرض الطلبات" className="flex rounded-xl border border-surface-200 bg-white p-1 shrink-0">
+            {([
+              ['list', 'قائمة', Rows3],
+              ['images', 'صور', Images],
+              ['grouped', 'تجميع', ListTree],
+            ] as const).map(([id, label, Icon]) => (
+              <button
+                key={id}
+                type="button"
+                onClick={() => onParams({
+                  ...params,
+                  view: id === 'list' ? '' : id,
+                  group: id === 'grouped' && groupBy !== 'status' ? groupBy : '',
+                })}
+                aria-pressed={view === id}
+                title={label}
+                className={`inline-flex items-center justify-center gap-1.5 rounded-lg px-2.5 py-1.5 text-sm font-bold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 ${
+                  view === id ? 'bg-primary-50 text-primary-800' : 'text-surface-500 hover:text-surface-800'
+                }`}
+              >
+                <Icon size={16} />
+                <span>{label}</span>
+              </button>
+            ))}
+          </div>
+          {view === 'grouped' && (
+            <Combobox
+              label="تجميع حسب"
+              value={groupBy}
+              onChange={value => setParam({ group: value === 'status' ? '' : value })}
+              options={GROUP_OPTIONS}
+              className="md:w-40"
+            />
+          )}
           {/* Realtime already refreshes the page on any write; this is for the
               other cases — a colleague's change that never reached this tab, or
               a request that failed while the browser was offline. */}
           <button
             type="button"
-            onClick={() => list.reload()}
-            disabled={list.loading}
+            onClick={() => { list.reload(); if (view === 'grouped') groupedResult.reload(); }}
+            disabled={list.loading || groupedResult.loading}
             aria-label="تحديث الطلبات"
             title="تحديث الطلبات"
             className={`${quietButton} md:w-auto disabled:opacity-60`}
           >
-            <RefreshCw size={16} className={list.loading ? 'animate-spin' : ''} />
+            <RefreshCw size={16} className={list.loading || groupedResult.loading ? 'animate-spin' : ''} />
             تحديث
           </button>
           <button
             type="button"
             onClick={() => setShowFilters(current => !current)}
             aria-expanded={showFilters}
-            className={`${quietButton} md:w-auto ${isFiltered(active) ? 'border-primary-300 text-primary-800 bg-primary-50' : ''}`}
+            className={`${quietButton} md:w-auto ${activeFilterCount > 0 ? 'border-primary-300 text-primary-800 bg-primary-50' : ''}`}
           >
             <SlidersHorizontal size={16} />
             تصفية
+            {/* Counts only what this panel holds. Status lives in the toggle
+                group above, so including it would light this button up with a
+                badge reading 0 and a panel with nothing set in it. */}
+            {activeFilterCount > 0 && (
+              <span className="inline-flex items-center justify-center w-5 h-5 rounded-md bg-primary-700 text-white text-[11px] tabular-nums">
+                {activeFilterCount}
+              </span>
+            )}
           </button>
+          {/* Import/export lives here now rather than in a panel of its own: it
+              is a toolbar action on this list, not a section of the page. */}
+          <BulkBar
+            spec={bulkSpec}
+            title="استيراد وتصدير الطلبات"
+            hint="يقبل Excel و CSV وملفات Google Sheets المصدَّرة. التصدير يتبع التصفية المعروضة الآن. الطلب الموجود يُحدَّث، والجديد يُنشأ بنفس قواعد المخزون — المطابقة بالمعرّف ثم برقم الطلب. عمود المنتجات بالصيغة: SKU * الكمية @ السعر # المقاس، ويُفصل بين المنتجات بفاصلة منقوطة. العميل يجب أن يكون موجوداً مسبقاً، والإجمالي يُحسب من السطور."
+          />
         </div>
 
         {showFilters && (
@@ -524,7 +798,7 @@ export const Orders: React.FC<OrdersProps> = ({ page, onPage, recordId, onRecord
             <div className="flex items-end">
               <button
                 type="button"
-                onClick={() => onParams({ sort: params.sort ?? '', size: params.size ?? '' })}
+                onClick={() => onParams({ sort: params.sort ?? '', size: params.size ?? '', ...viewParams })}
                 disabled={!isFiltered(active)}
                 className={`${quietButton} disabled:opacity-50`}
               >
@@ -535,8 +809,9 @@ export const Orders: React.FC<OrdersProps> = ({ page, onPage, recordId, onRecord
           </div>
         )}
 
-        {/* The header sticks to the top of this box rather than the page, which
-            is what keeps column names on screen while a 100-row page scrolls. */}
+        {view === 'list' ? (
+        /* The header sticks to the top of this box rather than the page, which
+           is what keeps column names on screen while a 100-row page scrolls. */
         <div className="overflow-auto max-h-[70dvh]">
           <table className="w-full text-sm text-right">
             <thead className="bg-surface-100/95 backdrop-blur text-surface-500 font-medium sticky top-0 z-10">
@@ -560,7 +835,7 @@ export const Orders: React.FC<OrdersProps> = ({ page, onPage, recordId, onRecord
                 <th className="px-5 py-3">الإجراءات</th>
               </tr>
             </thead>
-            <tbody ref={bodyRef} className="divide-y divide-surface-200/50">
+            <tbody ref={captureBody} className="divide-y divide-surface-200/50">
               {skeleton && Array.from({ length: 6 }, (_, i) => (
                 <tr key={`skeleton-${i}`} className="animate-pulse">
                   <td className={cell} colSpan={9}><div className="h-5 rounded-lg bg-surface-100" /></td>
@@ -580,6 +855,7 @@ export const Orders: React.FC<OrdersProps> = ({ page, onPage, recordId, onRecord
                     key={order.id}
                     tabIndex={0}
                     data-order-row=""
+                    data-order-id={order.id}
                     aria-label={`عرض تفاصيل الطلب ${order.orderNumber}`}
                     onClick={event => {
                       if ((event.target as HTMLElement).closest(
@@ -596,7 +872,10 @@ export const Orders: React.FC<OrdersProps> = ({ page, onPage, recordId, onRecord
                       selected.has(order.id) ? 'bg-primary-50/60' : ''
                     }`}
                   >
-                    <td className={cell}>
+                    {/* The accent rides the first cell rather than the row: a
+                        border on a <tr> is unreliable once the table collapses
+                        its borders. */}
+                    <td className={`${cell} ${STATUS_ACCENT_BASE} ${statusAccent[order.status] ?? STATUS_ACCENT_NONE}`}>
                       <input
                         type="checkbox"
                         checked={selected.has(order.id)}
@@ -623,77 +902,23 @@ export const Orders: React.FC<OrdersProps> = ({ page, onPage, recordId, onRecord
                       <div className="font-semibold text-surface-900 truncate">{order.customerName}</div>
                       <div className="text-xs text-surface-500 mt-1 truncate">{zone?.name ?? 'بدون منطقة'}</div>
                     </td>
-                    <td className={cell}>
-                      <div className="flex items-center gap-1">
-                        {order.items.slice(0, 2).map((item, idx) => (
-                          <div key={idx} className="w-8 h-8 rounded-lg bg-surface-100 overflow-hidden shrink-0 border border-surface-200" title={`${item.productName}${item.size ? ` · ${item.size}` : ''}`}>
-                            {item.image && <img src={item.image} alt="" width={32} height={32} loading="lazy" className="w-full h-full object-cover" />}
-                          </div>
-                        ))}
-                        {order.items.length > 2 && (
-                          <div className="w-8 h-8 rounded-lg bg-surface-100 flex items-center justify-center text-xs font-bold text-surface-600 border border-surface-200">
-                            +{order.items.length - 2}
-                          </div>
-                        )}
+                    {/* Names, not thumbnails. A 32px picture cannot tell two red
+                        dresses apart, and it left an empty grey square whenever a
+                        product had no photo. The same phrasing the change log
+                        uses, so an order reads identically in both places. */}
+                    <td className={`${cell} max-w-64`}>
+                      <div className="text-surface-800 truncate" title={describeOrderItems(order.items)}>
+                        {order.items.length > 0 ? describeOrderItems(order.items) : '—'}
                       </div>
                     </td>
                     <td className={`${cell} text-surface-600 font-medium max-w-40 truncate`}>{rep?.name ?? 'بدون مندوب'}</td>
                     <td className={`${cell} text-surface-600 font-medium tabular-nums whitespace-nowrap`}>{day(order.deliveryDate)}</td>
                     <td className={`${cell} font-black text-surface-900 tabular-nums`}>{money(order.total)}</td>
                     <td className={cell}>
-                      <Combobox
-                        size="sm"
-                        label={`حالة الطلب ${order.orderNumber}`}
-                        value={order.status}
-                        disabled={busy}
-                        onChange={value => applyStatus([order.id], value as OrderStatus)}
-                        options={ALL_STATUSES.map(status => ({ value: status, label: statusLabels[status] }))}
-                        tone={`border ${statusStyles[order.status]}`}
-                        className="min-w-32"
-                      />
+                      {renderStatusControl(order, busy)}
                     </td>
                     <td className={cell}>
-                      <div className="flex items-center gap-1 md:gap-2">
-                        <button
-                          onClick={() => onRecord(order.id)}
-                          className={`${actionButton} text-surface-500 hover:text-primary-700 hover:bg-primary-50`}
-                          aria-label={`عرض تفاصيل ${order.orderNumber}`} title="عرض التفاصيل"
-                        >
-                          <Eye size={18} />
-                        </button>
-                        <button
-                          onClick={() => setEditing(order)}
-                          disabled={busy}
-                          className={`${actionButton} text-surface-500 hover:text-primary-700 hover:bg-primary-50`}
-                          aria-label={`تعديل ${order.orderNumber}`} title="تعديل الطلب"
-                        >
-                          <Pencil size={18} />
-                        </button>
-                        <button
-                          onClick={() => applyStatus([order.id], 'shipped')}
-                          disabled={busy || order.status === 'shipped'}
-                          className={`${actionButton} text-surface-500 hover:text-indigo-700 hover:bg-indigo-50`}
-                          aria-label={`تغيير ${order.orderNumber} إلى قيد الشحن`} title="تغيير إلى قيد الشحن"
-                        >
-                          <Truck size={18} />
-                        </button>
-                        <button
-                          onClick={() => applyStatus([order.id], 'delivered')}
-                          disabled={busy || order.status === 'delivered'}
-                          className={`${actionButton} text-surface-500 hover:text-emerald-700 hover:bg-emerald-50`}
-                          aria-label={`تغيير ${order.orderNumber} إلى تم التسليم`} title="تغيير إلى تم التسليم"
-                        >
-                          <CheckCircle2 size={18} />
-                        </button>
-                        <button
-                          onClick={() => setConfirmDelete([order.id])}
-                          disabled={busy}
-                          className={`${actionButton} text-surface-500 hover:text-rose-700 hover:bg-rose-50`}
-                          aria-label={`حذف ${order.orderNumber}`} title="حذف الطلب"
-                        >
-                          <Trash2 size={18} />
-                        </button>
-                      </div>
+                      {renderOrderActions(order, busy)}
                     </td>
                   </motion.tr>
                 );
@@ -726,6 +951,210 @@ export const Orders: React.FC<OrdersProps> = ({ page, onPage, recordId, onRecord
             )}
           </table>
         </div>
+        ) : view === 'images' ? (
+          <div ref={captureBody} className="p-4 grid grid-cols-1 lg:grid-cols-2 2xl:grid-cols-3 gap-4">
+            {skeleton && Array.from({ length: 6 }, (_, index) => (
+              <div key={`image-skeleton-${index}`} className="h-96 rounded-2xl bg-surface-100 animate-pulse" />
+            ))}
+            {visibleOrders.map((order, index) => {
+              const busy = pendingId === order.id || pendingId === 'bulk';
+              const rep = salesReps.find(item => item.id === order.agentId);
+              const zone = zones.find(item => item.id === order.zoneId);
+              const age = ageInDays(order.createdAt);
+              const stale = OPEN_STATUSES.has(order.status) && age >= STALE_DAYS;
+              return (
+                <motion.article
+                  key={order.id}
+                  initial={{ opacity: 0, y: 12 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ delay: Math.min(index, 8) * 0.04 }}
+                  tabIndex={0}
+                  data-order-row=""
+                  data-order-id={order.id}
+                  aria-label={`عرض تفاصيل الطلب ${order.orderNumber}`}
+                  onClick={event => {
+                    if ((event.target as HTMLElement).closest(
+                      'button, input, select, textarea, a, [role="button"], [role="option"], [role="combobox"]',
+                    )) return;
+                    onRecord(order.id);
+                  }}
+                  onKeyDown={event => {
+                    if (event.currentTarget !== event.target || (event.key !== 'Enter' && event.key !== ' ')) return;
+                    event.preventDefault();
+                    onRecord(order.id);
+                  }}
+                  className={`overflow-hidden rounded-2xl border border-surface-200 bg-white shadow-sm cursor-pointer ${STATUS_ACCENT_BASE} ${statusAccent[order.status] ?? STATUS_ACCENT_NONE} focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 ${
+                    selected.has(order.id) ? 'ring-2 ring-primary-500 bg-primary-50/40' : ''
+                  }`}
+                >
+                  <div className="relative">
+                    {renderOrderImages(order)}
+                    <input
+                      type="checkbox"
+                      checked={selected.has(order.id)}
+                      onChange={() => {}}
+                      onClick={event => selectRow(index, event.shiftKey)}
+                      aria-label={`تحديد الطلب ${order.orderNumber}`}
+                      className={`${checkboxClass} absolute top-3 start-3 w-5 h-5 bg-white shadow-sm`}
+                    />
+                    {stale && (
+                      <span className="absolute top-3 end-3 rounded-lg border border-amber-200 bg-amber-50 px-2 py-1 text-xs font-bold text-amber-800 shadow-sm">
+                        متأخر {age} ي
+                      </span>
+                    )}
+                  </div>
+
+                  <div className="p-4 space-y-3">
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <p className="font-black text-surface-900" translate="no">{order.orderNumber}</p>
+                        <p className="mt-1 truncate font-bold text-surface-800">{order.customerName}</p>
+                      </div>
+                      <p className="shrink-0 text-lg font-black tabular-nums text-surface-900">{money(order.total)}</p>
+                    </div>
+                    <p className="line-clamp-2 min-h-10 text-sm leading-5 text-surface-600" title={describeOrderItems(order.items)}>
+                      {order.items.length > 0 ? describeOrderItems(order.items) : 'بدون منتجات'}
+                    </p>
+                    <div className="grid grid-cols-2 gap-2 text-xs text-surface-500">
+                      <span className="truncate">{rep?.name ?? 'بدون مندوب'}</span>
+                      <span className="truncate">{zone?.name ?? 'بدون منطقة'}</span>
+                      <span className="tabular-nums">إنشاء: {day(order.createdAt)}</span>
+                      <span className="tabular-nums">تسليم: {day(order.deliveryDate)}</span>
+                    </div>
+                    <div className="flex flex-wrap items-center justify-between gap-2 border-t border-surface-200 pt-3">
+                      {renderStatusControl(order, busy, 'min-w-36')}
+                      {renderOrderActions(order, busy)}
+                    </div>
+                  </div>
+                </motion.article>
+              );
+            })}
+          </div>
+        ) : (
+          <div ref={captureBody} className="p-4 space-y-4">
+            {skeleton && Array.from({ length: 4 }, (_, index) => (
+              <div key={`group-skeleton-${index}`} className="h-40 rounded-2xl bg-surface-100 animate-pulse" />
+            ))}
+            {groupedResult.capped && (
+              <p role="status" className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm font-bold text-amber-900">
+                عُرض أول {GROUP_CAP.toLocaleString('en-US')} طلب فقط. ضيّق المرشّحات لرؤية تجميع كامل لبقية النتائج.
+              </p>
+            )}
+            {groupedOrders.map(group => {
+              const allGroupSelected = group.orders.every(order => selected.has(order.id));
+              return (
+                <section key={group.key} className="overflow-hidden rounded-2xl border border-surface-200 bg-white">
+                  <div className={`flex flex-wrap items-center gap-3 border-b border-surface-200 bg-surface-50 px-4 py-3 ${
+                    groupBy === 'status' ? `${STATUS_ACCENT_BASE} ${statusAccent[group.key as OrderStatus] ?? STATUS_ACCENT_NONE}` : ''
+                  }`}>
+                    <input
+                      type="checkbox"
+                      checked={allGroupSelected}
+                      onChange={() => setSelected(current => {
+                        const next = new Set(current);
+                        group.orders.forEach(order => {
+                          if (allGroupSelected) next.delete(order.id); else next.add(order.id);
+                        });
+                        return next;
+                      })}
+                      aria-label={`تحديد مجموعة ${group.label}`}
+                      className={checkboxClass}
+                    />
+                    <h3 className="me-auto font-black text-surface-900">{group.label}</h3>
+                    <span className="rounded-lg bg-white px-2.5 py-1 text-xs font-bold text-surface-700 ring-1 ring-surface-200">
+                      {group.orderCount.toLocaleString('en-US')} طلب
+                    </span>
+                    <span className="text-xs font-bold text-surface-500">
+                      {group.units.toLocaleString('en-US')} قطعة
+                    </span>
+                    <span className="font-black tabular-nums text-surface-900">
+                      {group.totalKind === 'lines' ? 'قيمة السطور ' : 'الإجمالي '}{money(group.total)}
+                    </span>
+                  </div>
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-sm text-right">
+                      <thead className="bg-white text-xs font-bold text-surface-500">
+                        <tr>
+                          <th className="w-12 px-4 py-2" />
+                          <th className="px-4 py-2">رقم الطلب</th>
+                          <th className="px-4 py-2">العميل والمنتجات</th>
+                          <th className="px-4 py-2">المندوب</th>
+                          <th className="px-4 py-2">الإجمالي</th>
+                          <th className="px-4 py-2">الحالة</th>
+                          <th className="px-4 py-2">الإجراءات</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-surface-200/60">
+                        {group.orders.map(order => {
+                          const busy = pendingId === order.id || pendingId === 'bulk';
+                          const rep = salesReps.find(item => item.id === order.agentId);
+                          return (
+                            <tr
+                              key={`${group.key}-${order.id}`}
+                              tabIndex={0}
+                              data-order-row=""
+                              data-order-id={order.id}
+                              onClick={event => {
+                                if ((event.target as HTMLElement).closest(
+                                  'button, input, select, textarea, a, [role="button"], [role="option"], [role="combobox"]',
+                                )) return;
+                                onRecord(order.id);
+                              }}
+                              onKeyDown={event => {
+                                if (event.currentTarget !== event.target || (event.key !== 'Enter' && event.key !== ' ')) return;
+                                event.preventDefault();
+                                onRecord(order.id);
+                              }}
+                              className={`cursor-pointer hover:bg-surface-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary-500 ${
+                                selected.has(order.id) ? 'bg-primary-50/60' : ''
+                              }`}
+                            >
+                              <td className="px-4 py-3">
+                                <input
+                                  type="checkbox"
+                                  checked={selected.has(order.id)}
+                                  onChange={() => toggle(order.id)}
+                                  aria-label={`تحديد الطلب ${order.orderNumber}`}
+                                  className={checkboxClass}
+                                />
+                              </td>
+                              <td className="px-4 py-3 whitespace-nowrap">
+                                <span className="font-black text-surface-900" translate="no">{order.orderNumber}</span>
+                                <span className="mt-1 block text-xs tabular-nums text-surface-500">{day(order.createdAt)}</span>
+                              </td>
+                              <td className="max-w-72 px-4 py-3">
+                                <span className="block truncate font-bold text-surface-900">{order.customerName}</span>
+                                <span className="mt-1 block truncate text-xs text-surface-500" title={describeOrderItems(order.items)}>
+                                  {describeOrderItems(order.items) || '—'}
+                                </span>
+                              </td>
+                              <td className="max-w-40 truncate px-4 py-3 text-surface-600">{rep?.name ?? 'بدون مندوب'}</td>
+                              <td className="px-4 py-3 font-black tabular-nums text-surface-900">{money(order.total)}</td>
+                              <td className="px-4 py-3">{renderStatusControl(order, busy)}</td>
+                              <td className="px-4 py-3">{renderOrderActions(order, busy)}</td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                </section>
+              );
+            })}
+          </div>
+        )}
+
+        {view === 'images' && visibleOrders.length > 0 && (
+          <div className="flex flex-wrap items-center gap-x-6 gap-y-2 border-t border-surface-200 bg-surface-50/80 px-5 py-3 text-sm font-bold text-surface-900">
+            <span className="me-auto">هذه الصفحة: {visibleOrders.length.toLocaleString('en-US')} طلب</span>
+            <span className="tabular-nums">{money(pageTotal)}</span>
+            {totals && (
+              <span className="text-surface-600">
+                كل النتائج: {totals.order_count.toLocaleString('en-US')} طلب · <strong className="text-surface-900 tabular-nums">{money(totals.total)}</strong>
+              </span>
+            )}
+          </div>
+        )}
 
         {!skeleton && visibleOrders.length === 0 && (
           <div className="p-12 text-center">
@@ -739,7 +1168,9 @@ export const Orders: React.FC<OrdersProps> = ({ page, onPage, recordId, onRecord
           </div>
         )}
 
-        <Pagination page={page} total={list.total} pageSize={pageSize} onPage={onPage} loading={list.loading} />
+        {view !== 'grouped' && (
+          <Pagination page={page} total={list.total} pageSize={pageSize} onPage={onPage} loading={list.loading} />
+        )}
       </div>
 
       {/* Sticky inside the content column rather than fixed to the window: by
@@ -787,14 +1218,14 @@ export const Orders: React.FC<OrdersProps> = ({ page, onPage, recordId, onRecord
               onChange={agentId => void applyAgent([...selected], agentId)}
               options={[
                 { value: '', label: 'بدون مندوب' },
-                ...salesReps.filter(rep => rep.active).map(rep => ({
+                ...bulkAgents.map(rep => ({
                   value: rep.id,
                   label: rep.name,
                   hint: rep.zones.length > 0 ? rep.zones.join('، ') : 'كل المناطق',
                 })),
               ]}
               disabled={pendingId !== null}
-              placeholder="إسناد إلى مندوب"
+              placeholder={bulkAgents.length > 0 ? 'إسناد إلى مندوب' : 'لا مندوب يغطي كل المناطق المحددة'}
               className="w-44"
             />
           )}
@@ -815,31 +1246,6 @@ export const Orders: React.FC<OrdersProps> = ({ page, onPage, recordId, onRecord
         </div>
       )}
 
-      {/* A bulk status change is one click and hundreds of rows, so it gets a
-          window to take back rather than a confirmation nobody reads. */}
-      {undo && undo.length > 0 && selected.size === 0 && (
-        <div
-          role="status"
-          className="sticky bottom-4 z-30 rounded-2xl bg-surface-900 text-white shadow-2xl p-3 flex flex-wrap items-center gap-3"
-        >
-          <span className="font-bold text-sm me-auto">تغيّرت حالة {undo.length.toLocaleString('en-US')} طلب.</span>
-          <button
-            onClick={() => void applyUndo()}
-            disabled={pendingId !== null}
-            className="inline-flex items-center gap-2 text-sm font-bold bg-white text-surface-900 rounded-lg px-3 py-2 disabled:opacity-50 hover:bg-surface-100 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white"
-          >
-            <Undo2 size={16} />
-            تراجع
-          </button>
-          <button
-            onClick={() => setUndo(null)}
-            aria-label="إخفاء"
-            className="inline-flex items-center justify-center w-9 h-9 rounded-lg hover:bg-white/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white"
-          >
-            <X size={16} />
-          </button>
-        </div>
-      )}
 
       <OrderDetails
         order={openOrder}
@@ -865,6 +1271,16 @@ export const Orders: React.FC<OrdersProps> = ({ page, onPage, recordId, onRecord
         salesReps={salesReps}
         customerStoreIds={sharedStoreIds}
         onClose={() => { setCreating(false); setEditing(null); }}
+      />
+
+      <PartialDeliveryPrompt
+        order={partial}
+        onClose={() => setPartial(null)}
+        onSubmit={async items => {
+          const result = await setPartialDelivery(partial!.id, items);
+          if (result.ok) setNotice('سُجّل التسليم الجزئي.');
+          return result;
+        }}
       />
 
       {halting && (

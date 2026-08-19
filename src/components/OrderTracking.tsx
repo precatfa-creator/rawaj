@@ -1,7 +1,9 @@
 import React from 'react';
-import { Check, CircleDot, RotateCcw, XCircle } from 'lucide-react';
+import { AlertTriangle, Check, CircleDot, PackageMinus, PauseCircle, XCircle } from 'lucide-react';
 import { motion, useReducedMotion } from 'motion/react';
-import { estimatedDeliveryDate, TRACK_STEPS, trackingState } from '../lib/tracking';
+import { estimatedDeliveryDate, latestMoments, TRACK_STEPS, trackingState } from '../lib/tracking';
+import { deliveredUnits, orderedUnits } from '../lib/orderMath';
+import { statusLabels } from '../lib/dashboardStats';
 import type { DeliveryZone, Order, SalesRep } from '../types';
 
 /** A stage the order actually passed, as recorded by the audit trail. */
@@ -53,11 +55,16 @@ export const OrderTracking: React.FC<{
   const state = trackingState(order.status);
   const still = useReducedMotion();
   const halted = state.halted !== null;
+  const held = state.held;
+  // A partial delivery lands on the same rung as a full one, so the rung has
+  // to say which of the two happened rather than claiming the whole order
+  // arrived.
+  const partial = order.status === 'delivered_partial';
   const tone = state.halted ? HALT_TONES[state.halted] : null;
   const expected = estimatedDeliveryDate(order, zone?.deliveryTimeDays);
 
-  const firstReached = (status: string) => events.find(event => event.status === status);
-  const halt = halted ? events.find(event => event.status === order.status) : undefined;
+  const moments = latestMoments(events);
+  const halt = halted ? moments.get(order.status) : undefined;
 
   return (
     <section aria-label="سير الطلب" className="rounded-2xl border border-surface-200 bg-white overflow-hidden">
@@ -72,7 +79,7 @@ export const OrderTracking: React.FC<{
         {TRACK_STEPS.map((step, index) => {
           const reached = index <= state.index && !(halted && state.halted === 'canceled' && index > 0);
           const current = !halted && index === state.index;
-          const event = firstReached(step.status);
+          const event = moments.get(step.status);
           const last = index === TRACK_STEPS.length - 1;
           return (
             <li key={step.status} className="relative flex gap-3 pb-5 last:pb-0">
@@ -92,38 +99,75 @@ export const OrderTracking: React.FC<{
                 transition={{ duration: still ? 0 : 0.25, delay: still ? 0 : index * 0.06 }}
                 className={`relative z-10 mt-0.5 grid place-items-center w-6 h-6 shrink-0 rounded-full border-2 ${
                   reached
-                    ? tone?.marker ?? 'bg-primary-600 border-primary-600 text-white'
+                    ? current && held
+                      ? 'bg-slate-500 border-slate-500 text-white'
+                      : partial && last
+                        ? 'bg-teal-600 border-teal-600 text-white'
+                        : tone?.marker ?? 'bg-primary-600 border-primary-600 text-white'
                     : 'bg-white border-surface-300 text-transparent'
-                } ${current ? 'ring-4 ring-primary-100' : ''}`}
+                } ${current ? (held ? 'ring-4 ring-slate-200' : 'ring-4 ring-primary-100') : ''}`}
               >
-                {current ? <CircleDot size={13} /> : <Check size={13} />}
+                {current && held ? <PauseCircle size={13} />
+                  : partial && last ? <PackageMinus size={13} />
+                  : current ? <CircleDot size={13} /> : <Check size={13} />}
               </motion.span>
 
               <div className="min-w-0 -mt-0.5">
                 <p className={`text-sm font-bold ${reached ? 'text-surface-900' : 'text-surface-400'}`}>
-                  {step.label}
+                  {partial && last ? statusLabels.delivered_partial : step.label}
                 </p>
-                {event ? (
+                {/* Only stages this trip actually reached carry a moment. A rung
+                    the order has not got to yet would otherwise print the time
+                    it was reached on a previous trip. */}
+                {reached && (event ? (
                   <p className="text-xs text-surface-500 mt-0.5">
                     <span className="tabular-nums">{stamp.format(new Date(event.at))}</span>
                     {event.by && <span> · {event.by}</span>}
                   </p>
                 ) : (
-                  reached && <p className="text-xs text-surface-400 mt-0.5">بلا وقت مسجّل</p>
-                )}
+                  <p className="text-xs text-surface-400 mt-0.5">بلا وقت مسجّل</p>
+                ))}
               </div>
             </li>
           );
         })}
       </ol>
 
-      {halted && (
-        <p role="status" className="flex items-start gap-2 border-t border-rose-100 bg-rose-50 text-rose-800 font-bold text-sm px-4 py-3">
-          <XCircle size={18} className="shrink-0 mt-0.5" />
+      {held && (
+        <p role="status" className="flex items-start gap-2 border-t border-slate-200 bg-slate-50 text-slate-800 font-bold text-sm px-4 py-3">
+          <PauseCircle size={18} className="shrink-0 mt-0.5" />
+          <span>
+            هذا الطلب في الانتظار ولم يكتمل التسليم بعد.
+            {order.statusReason && (
+              <span className="block font-medium text-slate-600 mt-0.5">{order.statusReason}</span>
+            )}
+          </span>
+        </p>
+      )}
+
+      {partial && (
+        <p role="status" className="flex items-start gap-2 border-t border-teal-200 bg-teal-50 text-teal-900 font-bold text-sm px-4 py-3">
+          <PackageMinus size={18} className="shrink-0 mt-0.5" />
+          <span>
+            سُلّم جزء من هذا الطلب فقط.
+            <span className="block font-medium text-teal-800 mt-0.5 tabular-nums">
+              {deliveredUnits(order.items)} من {orderedUnits(order.items)} قطعة
+            </span>
+          </span>
+        </p>
+      )}
+
+      {halted && tone && (
+        <p role="status" className={`flex items-start gap-2 border-t font-bold text-sm px-4 py-3 ${tone.banner}`}>
+          {/* A cancellation failed, and reads as an error. A return is a hazard,
+              not a failure: the trip completed and the goods came back. */}
+          {state.halted === 'canceled'
+            ? <XCircle size={18} className="shrink-0 mt-0.5" />
+            : <AlertTriangle size={18} className="shrink-0 mt-0.5" />}
           <span>
             {state.halted === 'canceled' ? 'أُلغي هذا الطلب ولم يكتمل التسليم.' : 'أُرجع هذا الطلب بعد التسليم.'}
             {halt && (
-              <span className="block font-medium text-rose-700 mt-0.5 tabular-nums">
+              <span className={`block font-medium ${tone.detail} mt-0.5 tabular-nums`}>
                 {stamp.format(new Date(halt.at))}{halt.by && ` · ${halt.by}`}
               </span>
             )}

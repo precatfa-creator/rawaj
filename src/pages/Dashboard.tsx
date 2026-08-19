@@ -32,9 +32,11 @@ const CATEGORY_COLORS = ['#0d9488', '#8b5cf6', '#b45309', '#1d4ed8', '#be185d', 
 const STATUS_COLORS: Record<OrderStatus, string> = {
   new: '#1d4ed8',
   confirmed: '#6d28d9',
-  processing: '#b45309',
+  processing: '#c2410c',
   shipped: '#4338ca',
+  waiting: '#64748b',
   delivered: '#047857',
+  delivered_partial: '#0f766e',
   canceled: '#be123c',
   returned: '#475569',
 };

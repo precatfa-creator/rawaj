@@ -10,8 +10,9 @@ import { Card, DataTable, EmptyState, PageHead, Pill, count, money, quietButton 
 import type { OrderStatus } from '../types';
 
 const STATUS_COLORS: Record<OrderStatus, string> = {
-  new: '#1d4ed8', confirmed: '#6d28d9', processing: '#b45309', shipped: '#4338ca',
-  delivered: '#047857', canceled: '#be123c', returned: '#475569',
+  new: '#1d4ed8', confirmed: '#6d28d9', processing: '#c2410c', shipped: '#4338ca',
+  waiting: '#64748b', delivered: '#047857', delivered_partial: '#0f766e',
+  canceled: '#be123c', returned: '#475569',
 };
 
 const REPORTS = [

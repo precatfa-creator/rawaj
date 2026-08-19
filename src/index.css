@@ -61,3 +61,60 @@
     scrollbar-width: none;
   }
 }
+
+/*
+ * The delivery celebration. Kept here rather than inline because Tailwind's
+ * arbitrary `animate-[…]` utilities can name a keyframe but cannot define one.
+ *
+ * No reduced-motion block: the component checks `useReducedMotion` and simply
+ * does not apply these classes, so the card and its text render in their
+ * finished state instead of animating to it.
+ */
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
+@keyframes cardPop {
+  0%   { opacity: 0; transform: translateY(20px) scale(0.86); }
+  65%  { opacity: 1; transform: translateY(-4px) scale(1.02); }
+  100% { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+@keyframes iconPop {
+  0%   { transform: scale(0) rotate(-15deg); }
+  70%  { transform: scale(1.12) rotate(4deg); }
+  100% { transform: scale(1) rotate(0); }
+}
+
+@keyframes ring {
+  0%   { opacity: 0.7; transform: scale(0.5); }
+  100% { opacity: 0; transform: scale(1.7); }
+}
+
+@keyframes checkIn {
+  from { transform: rotate(-45deg) scale(0); }
+  to   { transform: rotate(-45deg) scale(1); }
+}
+
+@keyframes textUp {
+  from { opacity: 0; transform: translateY(10px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+/*
+ * The glow that opens the celebration: one light expanding well past the edges
+ * of the viewport, so the moment reads as a flash rather than as a card
+ * appearing. Scaled far enough (24x a 160px circle) to clear a wide monitor.
+ */
+@keyframes glowBurst {
+  0%   { opacity: 0; transform: scale(0.2); }
+  30%  { opacity: 1; }
+  100% { opacity: 0; transform: scale(24); }
+}
+
+@keyframes sparkle {
+  0%   { opacity: 0; transform: translateY(0) scale(0); }
+  25%  { opacity: 1; transform: translateY(-18px) scale(1.4); }
+  100% { opacity: 0; transform: translateY(-70px) scale(0.4); }
+}

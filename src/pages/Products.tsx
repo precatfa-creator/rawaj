@@ -1,6 +1,6 @@
 import React, { useMemo, useState } from 'react';
 import { useAppStore } from '../store';
-import { Plus, Search, Pencil, Trash2, Package, ArrowLeftRight } from 'lucide-react';
+import { Plus, Search, Pencil, Trash2, Package, ArrowLeftRight, LayoutGrid, Rows3 } from 'lucide-react';
 import { motion } from 'motion/react';
 import { PAGE_SIZE, useDimension, usePagedList } from '../lib/queries';
 import { deleteProduct } from '../lib/mutations';
@@ -10,11 +10,49 @@ import { StockForm } from '../components/StockForm';
 import { Combobox } from '../components/Combobox';
 import { BulkBar } from '../components/BulkBar';
 import { productBulk } from '../lib/bulk';
-import { Pagination, money } from '../components/ui';
+import { Pagination, Thumb, initialsOf, money, toneFor } from '../components/ui';
 import type { Product } from '../types';
 import type { PagedProps } from '../lib/route';
 
 const STAGGER_CAP = 8;
+
+/**
+ * Which of the two views this browser last used.
+ *
+ * Remembered rather than put in the URL: a filter is something you send to a
+ * colleague, but "I prefer the dense list" is a personal habit that should
+ * survive a refresh. Same reasoning as the remembered page size on orders.
+ */
+const VIEW_KEY = 'products.view';
+
+const ProductHero: React.FC<{ product: Product }> = ({ product }) => {
+  const src = product.images[0];
+  const [failed, setFailed] = useState(false);
+  React.useEffect(() => setFailed(false), [src]);
+
+  if (src && !failed) {
+    return (
+      <img
+        src={src}
+        alt={product.name}
+        loading="lazy"
+        onError={() => setFailed(true)}
+        className="max-h-full max-w-full object-contain transition-transform duration-500 group-hover:scale-110 motion-reduce:transition-none motion-reduce:group-hover:scale-100"
+      />
+    );
+  }
+
+  return (
+    <span
+      role="img"
+      aria-label={product.name}
+      className={`w-28 h-28 rounded-2xl grid place-items-center font-black text-4xl ${toneFor(product.name)}`}
+    >
+      {initialsOf(product.name)}
+    </span>
+  );
+};
+
 const statusLabels: Record<Product['status'], string> = {
   active: 'معروض',
   draft: 'مسودة',
@@ -25,6 +63,9 @@ export const Products: React.FC<PagedProps> = ({ page, onPage }) => {
   const { activeStoreId } = useAppStore();
   const [searchTerm, setSearchTerm] = useState('');
   const [status, setStatus] = useState<Product['status'] | 'all'>('all');
+  const [view, setView] = useState<'cards' | 'list'>(
+    () => (localStorage.getItem(VIEW_KEY) === 'list' ? 'list' : 'cards'),
+  );
   const [editing, setEditing] = useState<Product | null>(null);
   const [creating, setCreating] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState<Product | null>(null);
@@ -97,13 +138,31 @@ export const Products: React.FC<PagedProps> = ({ page, onPage }) => {
           ]}
           className="md:w-52"
         />
+        {/* Two readings of one list: cards answer "which one is it", the list
+            answers "what do they cost and how many are left". */}
+        <div role="group" aria-label="طريقة العرض" className="flex rounded-xl border border-surface-200 bg-white p-1 shrink-0">
+          {([['cards', 'بطاقات', LayoutGrid], ['list', 'قائمة', Rows3]] as const).map(([id, label, Icon]) => (
+            <button
+              key={id}
+              type="button"
+              onClick={() => { setView(id); localStorage.setItem(VIEW_KEY, id); }}
+              aria-pressed={view === id}
+              title={label}
+              className={`flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-sm font-bold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 ${
+                view === id ? 'bg-primary-50 text-primary-800' : 'text-surface-500 hover:text-surface-800'
+              }`}
+            >
+              <Icon size={16} />
+              {label}
+            </button>
+          ))}
+        </div>
+        <BulkBar
+          spec={bulkSpec}
+          title="استيراد وتصدير المنتجات"
+          hint="يقبل Excel و CSV وملفات Google Sheets المصدَّرة. المنتج الموجود يُحدَّث، والجديد يُضاف — المطابقة بالمعرّف ثم برمز SKU داخل هذا المتجر. الكمية الابتدائية تُطبَّق عند الإضافة فقط؛ مخزون منتج قائم يتغيّر بحركات المخزون وحدها."
+        />
       </div>
-
-      <BulkBar
-        spec={bulkSpec}
-        title="استيراد وتصدير المنتجات"
-        hint="يقبل Excel و CSV وملفات Google Sheets المصدَّرة. المنتج الموجود يُحدَّث، والجديد يُضاف — المطابقة بالمعرّف ثم برمز SKU داخل هذا المتجر. الكمية الابتدائية تُطبَّق عند الإضافة فقط؛ مخزون منتج قائم يتغيّر بحركات المخزون وحدها."
-      />
 
       {visibleProducts.length === 0 ? (
         <div className="glass-card rounded-2xl p-12 text-center">
@@ -114,6 +173,65 @@ export const Products: React.FC<PagedProps> = ({ page, onPage }) => {
           <p className="text-surface-500">
             {searchTerm || status !== 'all' ? 'لم يطابق أي منتج معايير البحث.' : 'أضف أول منتج لهذا المتجر.'}
           </p>
+        </div>
+      ) : view === 'list' ? (
+        /* The dense reading: what things cost and how many are left, lined up so
+           the columns can be compared down the page instead of hunted for
+           across cards. */
+        <div className="glass-card rounded-2xl overflow-hidden">
+          <div className="overflow-auto max-h-[70dvh]">
+            <table className="w-full text-sm text-right">
+              <thead className="bg-surface-50 text-surface-600 sticky top-0 z-10">
+                <tr>
+                  <th scope="col" className="px-4 py-3 font-bold">المنتج</th>
+                  <th scope="col" className="px-4 py-3 font-bold">التصنيف</th>
+                  <th scope="col" className="px-4 py-3 font-bold">سعر البيع</th>
+                  <th scope="col" className="px-4 py-3 font-bold">الربح</th>
+                  <th scope="col" className="px-4 py-3 font-bold">المخزون</th>
+                  <th scope="col" className="px-4 py-3 font-bold">مبيعة</th>
+                  <th scope="col" className="px-4 py-3 font-bold">الإجراءات</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-surface-200/50">
+                {visibleProducts.map(product => (
+                  <tr key={product.id} className="hover:bg-surface-50/70 transition-colors">
+                    <td className="px-4 py-3">
+                      <div className="flex items-center gap-3 min-w-0">
+                        <Thumb src={product.images[0]} name={product.name} className="w-10 h-10" />
+                        <div className="min-w-0">
+                          <div className="font-bold text-surface-900 truncate">{product.name}</div>
+                          <div className="text-xs text-surface-500 truncate" dir="ltr">{product.sku || '—'}</div>
+                        </div>
+                      </div>
+                    </td>
+                    <td className="px-4 py-3 text-surface-600">{product.category || '—'}</td>
+                    <td className="px-4 py-3 font-bold text-surface-900 tabular-nums whitespace-nowrap">{money(product.sellingPrice)}</td>
+                    <td className="px-4 py-3 font-bold text-emerald-700 tabular-nums whitespace-nowrap">{money(product.margin)}</td>
+                    <td className="px-4 py-3">
+                      <span className="inline-flex items-center gap-1.5 whitespace-nowrap">
+                        <span className={`w-2 h-2 rounded-full shrink-0 ${product.stock > product.minStock ? 'bg-emerald-600' : product.stock > 0 ? 'bg-amber-600' : 'bg-rose-600'}`} />
+                        <span className="tabular-nums font-bold text-surface-900">{product.stock}</span>
+                      </span>
+                    </td>
+                    <td className="px-4 py-3 text-surface-500 tabular-nums">{soldByProduct.get(product.id) ?? 0}</td>
+                    <td className="px-4 py-3">
+                      <div className="flex items-center gap-1">
+                        <button onClick={() => setEditing(product)} aria-label={`تعديل ${product.name}`} title="تعديل" className={`${iconButton} text-surface-500 hover:text-primary-700`}>
+                          <Pencil size={16} />
+                        </button>
+                        <button onClick={() => setMoving(product)} aria-label={`حركة مخزون ${product.name}`} title="حركة مخزون" className={`${iconButton} text-surface-500 hover:text-primary-700`}>
+                          <ArrowLeftRight size={16} />
+                        </button>
+                        <button onClick={() => setConfirmDelete(product)} aria-label={`حذف ${product.name}`} title="حذف" className={`${iconButton} text-surface-500 hover:text-rose-700`}>
+                          <Trash2 size={16} />
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         </div>
       ) : (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
@@ -153,16 +271,11 @@ export const Products: React.FC<PagedProps> = ({ page, onPage }) => {
               </div>
 
               <div className="h-56 w-full relative bg-surface-100 p-4 flex items-center justify-center">
-                {product.images[0] ? (
-                  <img
-                    src={product.images[0]}
-                    alt={product.name}
-                    loading="lazy"
-                    className="max-h-full max-w-full object-contain transition-transform duration-500 group-hover:scale-110 motion-reduce:transition-none motion-reduce:group-hover:scale-100"
-                  />
-                ) : (
-                  <Package size={40} className="text-surface-400" />
-                )}
+                {/* The card's image is a hero shot, sized to fill: it keeps its
+                    own markup rather than being squeezed into `Thumb`, and
+                    shares only the fallback so both views name a product the
+                    same way when it has no photo. */}
+                <ProductHero product={product} />
                 {product.status !== 'active' && (
                   <div className="absolute inset-0 bg-white/60 backdrop-blur-[2px] flex items-center justify-center">
                     <span className={`px-3 py-1.5 rounded-lg font-bold text-sm ${

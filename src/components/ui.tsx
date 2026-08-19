@@ -229,3 +229,77 @@ export const Pagination: React.FC<{
     </nav>
   );
 };
+
+
+/**
+ * A picture, or the name standing in for one.
+ *
+ * A missing image used to render an empty grey square, which reads as "broken"
+ * or "still loading" rather than "this one has no photo". Initials on a tinted
+ * ground say the second thing, and — unlike a generic icon — two products
+ * without photos still look like different products.
+ *
+ * `onError` matters as much as the empty check: an image URL survives the file
+ * being deleted from storage, so a truthy `src` is not proof of a picture. Both
+ * failures land on the same fallback.
+ */
+const AVATAR_TONES = [
+  'bg-primary-100 text-primary-800',
+  'bg-blue-100 text-blue-800',
+  'bg-violet-100 text-violet-800',
+  'bg-amber-100 text-amber-900',
+  'bg-rose-100 text-rose-800',
+  'bg-teal-100 text-teal-800',
+];
+
+/** Stable per name, so a product keeps the same colour between renders. */
+export const toneFor = (name: string) => {
+  let hash = 0;
+  for (let i = 0; i < name.length; i += 1) hash = (hash * 31 + name.charCodeAt(i)) >>> 0;
+  return AVATAR_TONES[hash % AVATAR_TONES.length];
+};
+
+/** First letter of each of the first two words — enough to tell things apart. */
+export const initialsOf = (name: string) =>
+  name.trim().split(/\s+/).slice(0, 2).map(word => [...word][0] ?? '').join('') || '؟';
+
+export const Thumb: React.FC<{
+  src?: string;
+  /** Names the image for assistive tech, and supplies the fallback initials. */
+  name: string;
+  /** Tailwind sizing for the box, e.g. `w-11 h-11`. */
+  className?: string;
+  /** Bigger boxes carry bigger initials. */
+  textClass?: string;
+  /** `contain` for a product shot that must be seen whole; `cover` for a chip. */
+  fit?: 'cover' | 'contain';
+}> = ({ src, name, className = 'w-11 h-11', textClass = 'text-sm', fit = 'cover' }) => {
+  const [failed, setFailed] = useState(false);
+  const box = `${className} rounded-lg border border-surface-200 shrink-0 overflow-hidden`;
+
+  // Editing a product can replace a broken URL without remounting its row.
+  // Give the new source its own attempt instead of preserving the old failure.
+  useEffect(() => setFailed(false), [src]);
+
+  if (!src || failed) {
+    return (
+      <span
+        role="img"
+        aria-label={name}
+        className={`${box} ${toneFor(name)} grid place-items-center font-black ${textClass}`}
+      >
+        {initialsOf(name)}
+      </span>
+    );
+  }
+
+  return (
+    <img
+      src={src}
+      alt={name}
+      loading="lazy"
+      onError={() => setFailed(true)}
+      className={`${box} ${fit === 'contain' ? 'object-contain' : 'object-cover'}`}
+    />
+  );
+};

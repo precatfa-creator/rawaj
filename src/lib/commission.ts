@@ -32,3 +32,22 @@ export const describeCommission = (zone: Pick<DeliveryZone, 'commissionType' | '
 /** Empty list means the rep covers every zone. */
 export const repCoversZone = (rep: Pick<SalesRep, 'zones'>, zoneName: string): boolean =>
   rep.zones.length === 0 || !zoneName || rep.zones.includes(zoneName);
+
+/**
+ * The reps an order in this zone may actually be handed to.
+ *
+ * Coverage is a rule, not a preference: a rep who does not serve the zone is
+ * not offered, because that pairing is a delivery nobody makes. An order with
+ * no zone yet constrains nothing — there is no zone to contradict.
+ *
+ * `keepId` keeps whoever is already assigned in the list even when they no
+ * longer cover the zone. Rows predate this rule, and a rep's zones can be
+ * edited afterwards; dropping them would blank the field and hide the bad
+ * pairing instead of showing it to be corrected.
+ */
+export const assignableReps = <T extends Pick<SalesRep, 'id' | 'zones' | 'active'>>(
+  reps: readonly T[],
+  zoneName: string,
+  keepId?: string,
+): T[] =>
+  reps.filter(rep => (rep.active && repCoversZone(rep, zoneName)) || (!!keepId && rep.id === keepId));

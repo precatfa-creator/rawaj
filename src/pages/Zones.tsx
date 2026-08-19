@@ -216,6 +216,11 @@ export const Zones: React.FC = () => {
               </button>
             ))}
           </div>
+          <BulkBar
+            spec={bulkSpec}
+            title="استيراد وتصدير المناطق"
+            hint="يقبل Excel و CSV وملفات Google Sheets المصدَّرة. المنطقة الموجودة تُحدَّث، والجديدة تُضاف. الملف المصدَّر يصلح كقالب معبَّأ — عدّله وأعد استيراده. اترك رقم المنطقة فارغاً ليُرقَّم تلقائياً."
+          />
         </div>
 
         <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-5 gap-3">
@@ -245,11 +250,6 @@ export const Zones: React.FC = () => {
         )}
       </Card>
 
-      <BulkBar
-        spec={bulkSpec}
-        title="استيراد وتصدير المناطق"
-        hint="يقبل Excel و CSV وملفات Google Sheets المصدَّرة. المنطقة الموجودة تُحدَّث، والجديدة تُضاف. الملف المصدَّر يصلح كقالب معبَّأ — عدّله وأعد استيراده. اترك رقم المنطقة فارغاً ليُرقَّم تلقائياً."
-      />
 
       {visible.length === 0 ? (
         <EmptyState

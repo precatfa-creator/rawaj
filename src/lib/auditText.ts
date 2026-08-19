@@ -70,6 +70,30 @@ const ISO = /^\d{4}-\d{2}-\d{2}(T|$)/;
 const dateTime = new Intl.DateTimeFormat('ar-LY', { dateStyle: 'medium', timeStyle: 'short' });
 const dateOnly = new Intl.DateTimeFormat('ar-LY', { dateStyle: 'medium' });
 
+/** Enough lines to recognise the order; past that the cell stops being readable. */
+const ITEM_LIMIT = 4;
+
+/**
+ * Order lines as "name ×qty", which is the smallest form a quantity edit still
+ * shows up in. Sizes are included because two lines of the same product differ
+ * only by size, and without it the diff reads as two identical entries.
+ *
+ * Exported because the orders list names its lines the same way. One phrasing
+ * for "what is in this order", whether it is being read in the change log or
+ * scanned down a column.
+ */
+export const describeOrderItems = (items: unknown[]): string => {
+  const lines = items.map(entry => {
+    const item = (entry ?? {}) as Record<string, unknown>;
+    const name = typeof item.productName === 'string' && item.productName !== '' ? item.productName : 'صنف';
+    const size = typeof item.size === 'string' && item.size !== '' ? ` (${item.size})` : '';
+    const quantity = Number(item.quantity);
+    return `${name}${size} ×${Number.isFinite(quantity) ? quantity : '؟'}`;
+  });
+  const shown = lines.slice(0, ITEM_LIMIT).join('، ');
+  return lines.length > ITEM_LIMIT ? `${shown} و${lines.length - ITEM_LIMIT} أخرى` : shown;
+};
+
 /**
  * A value as a reader would say it. `resolve` is how a page lends the names it
  * has — a rep's name for an `agent_id`, an Arabic label for a status — since
@@ -88,6 +112,11 @@ export const auditValue = (
   if (field === 'status' && typeof value === 'string' && statusLabels[value as OrderStatus]) {
     return statusLabels[value as OrderStatus];
   }
+
+  // Before the generic array branch: a line count hides the edit people make
+  // most. Changing a quantity leaves the number of lines identical, so
+  // "1 عنصر ← 1 عنصر" reported a real change as no change at all.
+  if (field === 'items' && Array.isArray(value)) return value.length === 0 ? '—' : describeOrderItems(value);
 
   if (value === null || value === undefined || value === '') return '—';
   if (typeof value === 'boolean') return value ? 'نعم' : 'لا';
@@ -113,6 +142,16 @@ export interface AuditChange {
 }
 
 /**
+ * Which columns a row is about. One source of truth, so the filter list and the
+ * rendered diff can never disagree about what a row touched.
+ */
+export const auditFields = (action: string, data: Record<string, unknown> | null): string[] => {
+  if (!data) return [];
+  const fields = Object.keys(data);
+  return action === 'UPDATE' ? fields : fields.filter(field => !NOISE.has(field));
+};
+
+/**
  * One row's changes, oldest value first. An update carries `{field: {from, to}}`;
  * a creation or deletion carries the whole record, and the bookkeeping columns
  * are dropped from it because nobody reads "معرّف المتجر" as news.
@@ -121,30 +160,55 @@ export const auditChanges = (
   action: string,
   data: Record<string, unknown> | null,
   resolve?: (field: string, value: unknown) => string | undefined,
-): AuditChange[] => {
-  if (!data) return [];
-
-  if (action === 'UPDATE') {
-    return Object.entries(data).map(([field, change]) => {
-      const { from, to } = (change ?? {}) as { from?: unknown; to?: unknown };
-      return {
-        field,
-        label: fieldLabel(field),
-        from: auditValue(field, from, resolve),
-        to: auditValue(field, to, resolve),
-      };
-    });
-  }
-
-  return Object.entries(data)
-    .filter(([field]) => !NOISE.has(field))
-    .map(([field, value]) => ({
+): AuditChange[] =>
+  auditFields(action, data).map(field => {
+    const raw = (data ?? {})[field];
+    if (action !== 'UPDATE') {
+      return { field, label: fieldLabel(field), from: null, to: auditValue(field, raw, resolve) };
+    }
+    const { from, to } = (raw ?? {}) as { from?: unknown; to?: unknown };
+    return {
       field,
       label: fieldLabel(field),
-      from: null,
-      to: auditValue(field, value, resolve),
-    }));
-};
+      from: auditValue(field, from, resolve),
+      to: auditValue(field, to, resolve),
+    };
+  });
+
+/** Empty string means "any", so a blank filter matches every row. */
+export interface AuditFilter {
+  action: string;
+  field: string;
+  /** Matches `actorId`; the empty string is the unattributed system actor. */
+  actor: string;
+}
+
+export const emptyAuditFilter: AuditFilter = { action: '', field: '', actor: '' };
+
+export const isAuditFiltered = (filter: AuditFilter): boolean =>
+  Boolean(filter.action || filter.field || filter.actor);
+
+/**
+ * How many rows the list shows, one "more" click at a time.
+ *
+ * 20 to start, then 50 more, then 100 more, then 200 — and 200 at a time after
+ * that. Somebody who has already asked twice is reading the whole log, not
+ * peeking at the top of it, so the chunks grow rather than making them click
+ * twenty times.
+ */
+export const AUDIT_PAGES = [20, 70, 170, 370];
+
+export const nextAuditPage = (visible: number): number =>
+  AUDIT_PAGES.find(size => size > visible) ?? visible + 200;
+
+/** A row survives every filter that is set. Unset filters do not narrow. */
+export const matchesAudit = (
+  row: { action: string; actorId: string | null; data: Record<string, unknown> | null },
+  filter: AuditFilter,
+): boolean =>
+  (!filter.action || row.action === filter.action)
+  && (!filter.actor || (row.actorId ?? '') === filter.actor)
+  && (!filter.field || auditFields(row.action, row.data).includes(filter.field));
 
 /**
  * The headline: what this row did, in one line.

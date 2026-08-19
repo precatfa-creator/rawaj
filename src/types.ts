@@ -1,4 +1,19 @@
-export type OrderStatus = 'new' | 'confirmed' | 'processing' | 'shipped' | 'delivered' | 'canceled' | 'returned';
+/**
+ * The life of an order.
+ *
+ * `waiting` is a pause held at `shipped` — the trip is still on, the goods are
+ * just not with the customer yet — so it stays pending revenue and can move
+ * forward. `delivered` and `delivered_partial` are both endings that earned
+ * money; the partial one earns only what was actually handed over, which is why
+ * it is a separate value rather than a flag.
+ *
+ * The stored words never change with the printed ones: `statusLabels` is the
+ * only place the Arabic lives. Mirrored by orders_status_check in
+ * 20260825000000_order_status_partial_delivery.sql.
+ */
+export type OrderStatus =
+  | 'new' | 'confirmed' | 'processing' | 'shipped' | 'waiting'
+  | 'delivered' | 'delivered_partial' | 'canceled' | 'returned';
 
 export interface Store {
   id: string;
@@ -66,6 +81,19 @@ export interface OrderItem {
   image: string;
   /** Chosen from the product's `sizes` when it has any. Empty when it does not. */
   size?: string;
+  /**
+   * How many of `quantity` actually reached the customer.
+   *
+   * Absent means "all of them", which is what every line written before partial
+   * delivery existed means, and what every full delivery still means.
+   *
+   * Only meaningful while `status` is `delivered_partial`. Moving an order back
+   * to a full delivery does not erase what was recorded here, so a stale number
+   * can survive on a `delivered` order — every reader gates on the status first
+   * rather than trusting this field on its own. Nothing that computes money
+   * reads it outside that gate.
+   */
+  deliveredQuantity?: number;
 }
 
 export interface Order {
@@ -239,7 +267,16 @@ export interface SalesRep {
   createdAt: string;
 }
 
-export type UserRole = 'admin' | 'user';
+/**
+ * What a person is across the whole system.
+ *
+ * The stored words are not the printed ones — `roleLabels` owns the Arabic — so
+ * renaming a role is never a data migration. `user` is the everyday employee;
+ * `agent` is a delivery rep, and carries no more privilege than `user` until a
+ * policy grants it some. Mirrored by profiles_role_check in
+ * 20260825100000_profile_role_agent.sql.
+ */
+export type UserRole = 'admin' | 'user' | 'agent';
 
 export interface Profile {
   id: string;

@@ -8,10 +8,10 @@ import type { Order, OrderStatus } from '../types';
  * reported separately rather than tacked on as a sixth and seventh circle.
  */
 export const TRACK_STEPS: Array<{ status: OrderStatus; label: string }> = [
-  { status: 'new', label: 'طلب جديد' },
+  { status: 'new', label: 'طلب شحن' },
   { status: 'confirmed', label: 'تم التأكيد' },
   { status: 'processing', label: 'قيد التجهيز' },
-  { status: 'shipped', label: 'قيد الشحن' },
+  { status: 'shipped', label: 'قيد التوصيل' },
   { status: 'delivered', label: 'تم التسليم' },
 ];
 
@@ -20,6 +20,12 @@ export interface TrackState {
   index: number;
   /** Null while the order is still moving. */
   halted: 'canceled' | 'returned' | null;
+  /**
+   * True while the order is parked mid-trip. Not a halt: the goods are still
+   * out and the money is still expected, so the ladder keeps its position and
+   * only the marker says the trip is paused.
+   */
+  held: boolean;
 }
 
 /**
@@ -33,12 +39,39 @@ export interface TrackState {
  * drawn from the start and the banner carries the real news.
  */
 export const trackingState = (status: OrderStatus): TrackState => {
-  if (status === 'returned') return { index: TRACK_STEPS.length - 1, halted: 'returned' };
-  if (status === 'canceled') return { index: 0, halted: 'canceled' };
+  if (status === 'returned') return { index: TRACK_STEPS.length - 1, halted: 'returned', held: false };
+  if (status === 'canceled') return { index: 0, halted: 'canceled', held: false };
+
+  // A hold sits where the order already got to — out for delivery — rather than
+  // adding a rung every order would appear to have passed through.
+  if (status === 'waiting') {
+    return { index: TRACK_STEPS.findIndex(step => step.status === 'shipped'), halted: null, held: true };
+  }
+
+  // A partial delivery is still an arrival: the trip finished, and what it
+  // earned is a question for the lines, not for the ladder.
+  if (status === 'delivered_partial') {
+    return { index: TRACK_STEPS.length - 1, halted: null, held: false };
+  }
+
   const index = TRACK_STEPS.findIndex(step => step.status === status);
   // An unknown status is treated as the beginning rather than crashing the
   // details view: the badge beside it still prints whatever the row says.
-  return { index: index === -1 ? 0 : index, halted: null };
+  return { index: index === -1 ? 0 : index, halted: null, held: false };
+};
+
+/**
+ * The moment each stage was last reached, keyed by status.
+ *
+ * Last, not first. An order sent back to a stage it already passed is on a new
+ * trip: showing the first time it was confirmed means a status changed just now
+ * still reads with a timestamp from days ago. Events arrive oldest first, so a
+ * later entry for the same status overwrites the earlier one.
+ */
+export const latestMoments = <T extends { status: string }>(events: readonly T[]): Map<string, T> => {
+  const moments = new Map<string, T>();
+  events.forEach(event => moments.set(event.status, event));
+  return moments;
 };
 
 /**

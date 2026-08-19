@@ -42,14 +42,94 @@ export interface DashboardStats {
 }
 
 export const statusLabels: Record<OrderStatus, string> = {
-  new: 'جديد',
+  new: 'طلب شحن',
   confirmed: 'تم التأكيد',
   processing: 'قيد التجهيز',
-  shipped: 'قيد الشحن',
-  delivered: 'تم التسليم',
+  shipped: 'قيد التوصيل',
+  waiting: 'انتظار',
+  delivered: 'تسليم كامل',
+  delivered_partial: 'تسليم جزئي',
   canceled: 'ملغي',
   returned: 'مرتجع',
 };
+
+/**
+ * The edge accent a finished order carries, in the list and on its own page.
+ *
+ * Only the three terminal states get one, so the stripe answers "which orders
+ * are closed, and how" — an order still moving carries none, and the colour
+ * never becomes wallpaper. It is an edge rather than a fill because the row
+ * background is already spoken for by hover and by selection, and a fill would
+ * make a checked row hard to pick out during a bulk action.
+ *
+ * Colour never carries this alone: everywhere it appears, the status is also
+ * printed in words.
+ */
+export const statusAccent: Record<OrderStatus, string> = {
+  new: 'border-s-blue-400',
+  confirmed: 'border-s-violet-400',
+  // Orange, not amber: `returned` owns amber, and two statuses sharing a colour
+  // is invisible in a chip but obvious once it is a stripe down a row.
+  processing: 'border-s-orange-400',
+  shipped: 'border-s-indigo-400',
+  waiting: 'border-s-slate-400',
+  delivered: 'border-s-emerald-400',
+  delivered_partial: 'border-s-teal-400',
+  canceled: 'border-s-rose-400',
+  returned: 'border-s-amber-400',
+};
+
+/**
+ * The width, always applied, so the 4px edge is reserved on every row and
+ * nothing shifts when it colours.
+ *
+ * The transparent fallback belongs in the caller's `??`, not in here: both
+ * classes set `border-inline-start-color` at the same specificity, so an
+ * element carrying the pair takes whichever Tailwind happens to emit last —
+ * which is `border-s-transparent`, silently swallowing every accent.
+ */
+export const STATUS_ACCENT_BASE = 'border-s-4';
+export const STATUS_ACCENT_NONE = 'border-s-transparent';
+
+/**
+ * A wash that fades out of the accent edge, for the one card that carries the
+ * whole order. It reads as the edge bleeding into the sheet rather than as a
+ * second, competing block of colour, and it stops before the card's midpoint so
+ * the text it sits behind never loses contrast.
+ *
+ * A gradient is a background *image*, so it layers over the card's `bg-white`
+ * instead of fighting it — unlike two border-colour classes, which collide.
+ *
+ * `to-l` is the physical direction that matches inline-start in this RTL app;
+ * Tailwind has no logical gradient direction, so an LTR rendering would need
+ * this flipped.
+ */
+export const statusWash: Record<OrderStatus, string> = {
+  new: 'bg-gradient-to-l from-blue-100 via-blue-50 via-25% to-white to-60%',
+  confirmed: 'bg-gradient-to-l from-violet-100 via-violet-50 via-25% to-white to-60%',
+  processing: 'bg-gradient-to-l from-orange-100 via-orange-50 via-25% to-white to-60%',
+  shipped: 'bg-gradient-to-l from-indigo-100 via-indigo-50 via-25% to-white to-60%',
+  waiting: 'bg-gradient-to-l from-slate-200 via-slate-100 via-25% to-white to-60%',
+  delivered: 'bg-gradient-to-l from-emerald-100 via-emerald-50 via-25% to-white to-60%',
+  delivered_partial: 'bg-gradient-to-l from-teal-100 via-teal-50 via-25% to-white to-60%',
+  canceled: 'bg-gradient-to-l from-rose-100 via-rose-50 via-25% to-white to-60%',
+  returned: 'bg-gradient-to-l from-amber-100 via-amber-50 via-25% to-white to-60%',
+};
+
+/*
+ * Every tint was measured against `surface-600`, the lightest text that sits on
+ * one: the worst is 6.15:1, well clear of the 4.5:1 floor for small text.
+ */
+
+/**
+ * Every status, in the order an order lives through them.
+ *
+ * Derived from `statusLabels` rather than written out again: the two hand-typed
+ * copies of this list silently omitted `waiting` and `delivered_partial` when
+ * they were added, because an array of strings gives the compiler nothing to
+ * check. Insertion order in `statusLabels` is the lifecycle order.
+ */
+export const ALL_STATUSES = Object.keys(statusLabels) as OrderStatus[];
 
 // Canceled and returned orders never became revenue, so they stay out of every total.
 export const isRealized = (order: Order) =>

@@ -3,6 +3,8 @@ import type { Session } from '@supabase/supabase-js';
 import { MotionConfig } from 'motion/react';
 import { AppProvider, useAppStore } from './store';
 import { MainLayout } from './layouts/MainLayout';
+import { Celebration } from './components/Celebration';
+import { useDeliveryCelebration } from './lib/celebrate';
 import { Portal, type PortalTab } from './pages/Portal';
 import { Products } from './pages/Products';
 import { StockMovements } from './pages/StockMovements';
@@ -54,6 +56,8 @@ const Workspace: React.FC<{ profile: Profile }> = ({ profile }) => {
       navigate({ view: 'stores', storeId: null, page: 0 }, true);
     }
   }, [route.storeId, stores.length, store]);
+
+  const celebration = useDeliveryCelebration(store?.id ?? null);
 
   if (!store) {
     const portalTab: PortalTab = route.view === 'stores' ? 'stores' : 'stats';
@@ -145,6 +149,10 @@ const Workspace: React.FC<{ profile: Profile }> = ({ profile }) => {
       >
         {renderContent()}
       </MainLayout>
+      {/* Mounted on the store shell, not on a page: a delivery completed by a
+          colleague should reach whoever is in the store, whatever screen they
+          happen to be on. */}
+      <Celebration delivery={celebration.delivery} onDone={celebration.dismiss} />
       {profile.role === 'admin' && (
         <Suspense fallback={null}>
           <AdminDatabaseChat stores={stores} activeStoreId={store.id} />

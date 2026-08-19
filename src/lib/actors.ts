@@ -1,5 +1,13 @@
 import { useEffect, useState } from 'react';
 import { supabase } from '../db/supabase';
+import type { UserRole } from '../types';
+
+/** The one place the roles are named, so a rename never touches stored data. */
+export const roleLabels: Record<UserRole, string> = {
+  admin: 'مدير نظام',
+  user: 'موظف',
+  agent: 'مندوب',
+};
 
 /**
  * Who made a change, resolved at read time.

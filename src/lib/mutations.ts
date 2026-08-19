@@ -528,12 +528,11 @@ export interface OrderStatusRow {
 }
 
 /**
- * What the statuses were, read before a bulk change writes over them.
+ * What the statuses were, read before a change writes over them.
  *
- * This is what makes "undo" honest: restoring 200 orders to one status would be
- * a second mistake, because they did not all start there. The reason travels
- * with the status for the same reason — putting an order back to `returned`
- * without the note explaining the return only half restores it.
+ * Read first because afterwards they are gone, and the caller needs to know
+ * which orders actually moved: a delivery is only worth announcing for the ones
+ * that were not already delivered.
  */
 export const orderStatusesOf = async (ids: string[]): Promise<OrderStatusRow[]> => {
   const { data, error } = await supabase.from('orders').select('id,status,statusReason:status_reason').in('id', ids);
@@ -541,20 +540,6 @@ export const orderStatusesOf = async (ids: string[]): Promise<OrderStatusRow[]> 
   return (data ?? []) as OrderStatusRow[];
 };
 
-/** One update per distinct previous status and reason, restoring both. */
-export const restoreOrderStatuses = async (previous: OrderStatusRow[]): Promise<WriteResult> => {
-  const groups = new Map<string, string[]>();
-  previous.forEach(row => {
-    const key = JSON.stringify([row.status, row.statusReason ?? '']);
-    groups.set(key, [...(groups.get(key) ?? []), row.id]);
-  });
-  for (const [key, ids] of groups) {
-    const [status, reason] = JSON.parse(key) as [OrderStatus, string];
-    const result = await setOrderStatus(ids, status, reason);
-    if (!result.ok) return result;
-  }
-  return ok;
-};
 
 /**
  * `reason` is what the operator typed when cancelling or returning. Every other
@@ -565,6 +550,26 @@ export const setOrderStatus = (ids: string[], status: OrderStatus, reason = '') 
   run(
     supabase.from('orders').update({ status, status_reason: reason }).in('id', ids),
     ids.length > 1 ? 'تعذر تحديث حالة الطلبات.' : 'تعذر تحديث حالة الطلب.',
+  );
+
+/**
+ * Marking one order partly delivered.
+ *
+ * The lines and the status move together in a single update, because an order
+ * that says `delivered_partial` without per-line quantities would be read as a
+ * full delivery by every total — the status is only meaningful with the numbers
+ * beside it.
+ *
+ * Stock is deliberately not adjusted here: what did not arrive is still out
+ * with the rep, not back on the shelf, and returning it is a separate movement
+ * somebody records when it physically comes back.
+ */
+export const setPartialDelivery = (id: string, items: OrderItem[], reason = '') =>
+  run(
+    supabase.from('orders')
+      .update({ status: 'delivered_partial', status_reason: reason, items })
+      .eq('id', id),
+    'تعذر حفظ التسليم الجزئي.',
   );
 
 export const deleteOrders = (ids: string[]) =>

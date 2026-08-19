@@ -8,6 +8,7 @@ import { narrow, type Narrowing } from './queries';
 import { formatOrderItems, parseOrderItems } from './orderSheet';
 import { byCode, zoneFromRow } from './zones';
 import { statusLabels } from './dashboardStats';
+import { repCoversZone } from './commission';
 import { splitList } from './text';
 import type {
   CommissionType, DeliveryZone, Order, OrderItem, OrderStatus, Product, SalesRep, ZoneRegion,
@@ -344,12 +345,24 @@ const ORDER_COLUMNS =
 /** Orders are unbounded; an export that tried to be complete would time out. */
 const ORDER_EXPORT_LIMIT = 5000;
 
+/**
+ * Wording a status used to be printed with.
+ *
+ * A file exported before the rename is still a valid file to import — the
+ * operator has no way to know the words moved — so the old labels keep
+ * resolving to the same stored value.
+ */
+const LEGACY_STATUS_LABELS: Record<string, OrderStatus> = {
+  'جديد': 'new',
+  'قيد الشحن': 'shipped',
+};
+
 const orderStatusFromLabel = (value: string, fallback: OrderStatus): OrderStatus => {
   const text = value.trim();
   if (text === '') return fallback;
   const match = (Object.keys(statusLabels) as OrderStatus[])
     .find(status => status === text.toLowerCase() || statusLabels[status] === text);
-  return match ?? fallback;
+  return match ?? LEGACY_STATUS_LABELS[text] ?? fallback;
 };
 
 /**
@@ -544,6 +557,18 @@ export const orderBulk = (
 
       if (draft.items.length === 0) {
         return { ok: false, message: 'أضف منتجاً واحداً على الأقل في عمود المنتجات.' };
+      }
+
+      // A spreadsheet has no dropdown to constrain it, so the zone rule is
+      // enforced here too: a file is the one way an order could otherwise reach
+      // a rep who does not serve it.
+      const draftRep = refs.salesReps.find(item => item.id === draft.agentId);
+      const draftZoneName = refs.zones.find(item => item.id === draft.zoneId)?.name ?? '';
+      if (draftRep && !repCoversZone(draftRep, draftZoneName)) {
+        return {
+          ok: false,
+          message: `المندوب "${draftRep.name}" لا يغطي منطقة "${draftZoneName}".`,
+        };
       }
 
       const id = existing?.id ?? newId();

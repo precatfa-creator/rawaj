@@ -1,6 +1,7 @@
 import React, { FormEvent, useCallback, useEffect, useState } from 'react';
 import { AlertCircle, CheckCircle2, ShieldCheck, UserPlus, Users } from 'lucide-react';
 import { supabase } from '../db/supabase';
+import { roleLabels } from '../lib/actors';
 import { Combobox } from '../components/Combobox';
 import { Pagination } from '../components/ui';
 import type { Profile, UserRole } from '../types';
@@ -174,8 +175,9 @@ export const AdminUsers: React.FC<AdminUsersProps> = ({ currentUserId }) => {
             value={role}
             onChange={value => setRole(value as UserRole)}
             options={[
-              { value: 'user', label: 'مستخدم' },
-              { value: 'admin', label: 'مدير نظام' },
+              { value: 'user', label: roleLabels.user },
+              { value: 'agent', label: roleLabels.agent },
+              { value: 'admin', label: roleLabels.admin },
             ]}
           />
 
@@ -213,8 +215,12 @@ export const AdminUsers: React.FC<AdminUsersProps> = ({ currentUserId }) => {
                     </div>
                     <p className="text-sm text-surface-500 truncate" dir="ltr">{item.email}</p>
                   </div>
-                  <span className={`text-xs font-bold rounded-full px-3 py-1 ${item.role === 'admin' ? 'bg-violet-50 text-violet-700' : 'bg-surface-100 text-surface-600'}`}>
-                    {item.role === 'admin' ? 'مدير' : 'مستخدم'}
+                  <span className={`text-xs font-bold rounded-full px-3 py-1 ${
+                    item.role === 'admin' ? 'bg-violet-50 text-violet-700'
+                      : item.role === 'agent' ? 'bg-sky-50 text-sky-700'
+                      : 'bg-surface-100 text-surface-600'
+                  }`}>
+                    {roleLabels[item.role] ?? item.role}
                   </span>
                   <button
                     type="button"
