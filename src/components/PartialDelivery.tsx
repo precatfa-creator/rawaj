@@ -124,7 +124,8 @@ export const PartialDeliveryPrompt: React.FC<{
                       min={0}
                       max={item.quantity}
                       step={1}
-                      value={delivered}
+                      value={delivered || ''}
+                      placeholder="0"
                       onChange={event => setLine(index, Number(event.target.value))}
                       aria-label={`الكمية المسلّمة من ${item.productName}`}
                       className="w-20 bg-white border border-surface-200 rounded-lg px-2 py-1.5 text-sm font-bold tabular-nums focus:outline-none focus:ring-2 focus:ring-primary-500/30 focus:border-primary-500"
