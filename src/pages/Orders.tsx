@@ -595,7 +595,7 @@ export const Orders: React.FC<OrdersProps> = ({ page, onPage, recordId, onRecord
       <div
         role="group"
         aria-label="تصفية حسب الحالة"
-        className="flex overflow-x-auto no-scrollbar gap-1 p-1 rounded-2xl border border-surface-200/80 bg-surface-100/70"
+        className="flex justify-center overflow-x-auto no-scrollbar gap-1 p-1 rounded-2xl border border-surface-200/80 bg-surface-100/70"
       >
         {(['all', ...ALL_STATUSES] as const).map(status => {
           const value = status === 'all' ? '' : status;
