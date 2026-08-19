@@ -301,6 +301,9 @@ const orderFailure = (error: { message?: string }, fallback: string): string => 
   }
   if (raw.includes('EMPTY_ORDER')) return 'أضف منتجاً واحداً على الأقل.';
   if (raw.includes('NO_SUCH_ORDER')) return 'الطلب لم يعد موجوداً.';
+  if (raw.includes('NO_SUCH_PRODUCT')) return 'المنتج المرتبط بالطلب لم يعد موجوداً.';
+  if (raw.includes('INVALID_PARTIAL_DELIVERY')) return 'بيانات التسليم الجزئي غير صالحة.';
+  if (raw.includes('PERMISSION_DENIED')) return 'لا تملك صلاحية تعديل مخزون هذا المتجر.';
   if (raw.includes('duplicate key')) return 'رقم الطلب مستخدم بالفعل. أعد المحاولة.';
   return fallback;
 };
@@ -314,8 +317,8 @@ const orderFailure = (error: { message?: string }, fallback: string): string => 
  * edited order can be explained afterwards — which is the point of editing
  * through a transaction rather than a plain update.
  *
- * Status is not part of it: that is changed from the orders table, and two
- * writers for one field is how they disagree.
+ * Status is not part of it: that is changed through the transition-aware
+ * status function, so an edit cannot race a stock reservation or return.
  */
 export const updateOrder = async (draft: Omit<OrderDraft, 'orderNumber' | 'storeId'>): Promise<WriteResult> => {
   const { error } = await supabase.rpc('update_order_with_stock', {
@@ -546,11 +549,22 @@ export const orderStatusesOf = async (ids: string[]): Promise<OrderStatusRow[]> 
  * status clears it: a reason left behind from an earlier cancellation would
  * read as the reason for the state the order is in now.
  */
-export const setOrderStatus = (ids: string[], status: OrderStatus, reason = '') =>
-  run(
-    supabase.from('orders').update({ status, status_reason: reason }).in('id', ids),
-    ids.length > 1 ? 'تعذر تحديث حالة الطلبات.' : 'تعذر تحديث حالة الطلب.',
-  );
+export const setOrderStatus = async (
+  ids: string[],
+  status: OrderStatus,
+  reason = '',
+  items: OrderItem[] | null = null,
+): Promise<WriteResult> => {
+  const { error } = await supabase.rpc('set_order_status_with_stock', {
+    p_order_ids: ids,
+    p_status: status,
+    p_reason: reason,
+    p_items: items,
+  });
+  if (!error) return ok;
+  console.error('setOrderStatus failed', error);
+  return fail(orderFailure(error, ids.length > 1 ? 'تعذر تحديث حالة الطلبات.' : 'تعذر تحديث حالة الطلب.'));
+};
 
 /**
  * Marking one order partly delivered.
@@ -560,17 +574,13 @@ export const setOrderStatus = (ids: string[], status: OrderStatus, reason = '') 
  * full delivery by every total — the status is only meaningful with the numbers
  * beside it.
  *
- * Stock is deliberately not adjusted here: what did not arrive is still out
- * with the rep, not back on the shelf, and returning it is a separate movement
- * somebody records when it physically comes back.
+ * Stock follows the status exposure transition in the same database function:
+ * active → partial keeps the units with the rep, while reopening a canceled or
+ * returned order reserves them again. A partial delivery never silently puts
+ * undelivered units back on the shelf.
  */
 export const setPartialDelivery = (id: string, items: OrderItem[], reason = '') =>
-  run(
-    supabase.from('orders')
-      .update({ status: 'delivered_partial', status_reason: reason, items })
-      .eq('id', id),
-    'تعذر حفظ التسليم الجزئي.',
-  );
+  setOrderStatus([id], 'delivered_partial', reason, items);
 
 export const deleteOrders = (ids: string[]) =>
   run(supabase.from('orders').delete().in('id', ids), 'تعذر حذف الطلبات.');
