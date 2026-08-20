@@ -261,6 +261,8 @@ export interface OrderDraft {
   zoneId: string;
   /** Which naming series numbers this order; the doctype default when blank. */
   namingSeries?: string;
+  /** Promised delivery day as `YYYY-MM-DD`; blank when none was set. */
+  deliveryDate: string;
 }
 
 /**
@@ -282,6 +284,7 @@ export const createOrder = async (draft: OrderDraft): Promise<WriteResult> => {
     p_agent_id: draft.agentId || null,
     p_zone_id: draft.zoneId || null,
     p_naming_series: draft.namingSeries || null,
+    p_delivery_date: draft.deliveryDate || null,
   });
 
   if (!error) return ok;
@@ -331,6 +334,7 @@ export const updateOrder = async (draft: Omit<OrderDraft, 'orderNumber' | 'store
     p_notes: draft.notes.trim(),
     p_agent_id: draft.agentId || null,
     p_zone_id: draft.zoneId || null,
+    p_delivery_date: draft.deliveryDate || null,
   });
 
   if (!error) return ok;

@@ -553,6 +553,9 @@ export const orderBulk = (
         notes: row['ملاحظات'] ?? existing?.notes ?? '',
         agentId: rep?.id ?? existing?.agentId ?? '',
         zoneId: zone?.id ?? existing?.zoneId ?? '',
+        // No column carries it, so an edited row keeps the date the order
+        // already had rather than clearing it.
+        deliveryDate: (existing?.deliveryDate ?? '').slice(0, 10),
       };
 
       if (draft.items.length === 0) {

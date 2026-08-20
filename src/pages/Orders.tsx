@@ -906,8 +906,8 @@ export const Orders: React.FC<OrdersProps> = ({ page, onPage, recordId, onRecord
                         dresses apart, and it left an empty grey square whenever a
                         product had no photo. The same phrasing the change log
                         uses, so an order reads identically in both places. */}
-                    <td className={`${cell} max-w-64`}>
-                      <div className="text-surface-800 truncate" title={describeOrderItems(order.items)}>
+                    <td className={`${cell} max-w-64 align-top`}>
+                      <div className="text-surface-800 whitespace-normal break-words" title={describeOrderItems(order.items)}>
                         {order.items.length > 0 ? describeOrderItems(order.items) : '—'}
                       </div>
                     </td>

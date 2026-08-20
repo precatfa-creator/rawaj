@@ -41,6 +41,7 @@ export const OrderForm: React.FC<{
   const [items, setItems] = useState<OrderItem[]>([]);
   const [discount, setDiscount] = useState(0);
   const [deliveryFee, setDeliveryFee] = useState(0);
+  const [deliveryDate, setDeliveryDate] = useState('');
   const [notes, setNotes] = useState('');
   const [zoneId, setZoneId] = useState('');
   const [agentId, setAgentId] = useState('');
@@ -68,6 +69,9 @@ export const OrderForm: React.FC<{
     setItems(order?.items ?? []);
     setDiscount(order?.discount ?? 0);
     setDeliveryFee(order?.deliveryFee ?? 0);
+    // The column is a date, so a timestamp from an import is cut to its day —
+    // <input type="date"> shows nothing at all for anything longer.
+    setDeliveryDate((order?.deliveryDate ?? '').slice(0, 10));
     setNotes(order?.notes ?? '');
     setZoneId(order?.zoneId ?? '');
     setAgentId(order?.agentId ?? '');
@@ -89,6 +93,7 @@ export const OrderForm: React.FC<{
     || customerName !== (order?.customerName ?? '')
     || discount !== (order?.discount ?? 0)
     || deliveryFee !== (order?.deliveryFee ?? 0)
+    || deliveryDate !== (order?.deliveryDate ?? '').slice(0, 10)
     || notes !== (order?.notes ?? '')
     || zoneId !== (order?.zoneId ?? '')
     || agentId !== (order?.agentId ?? '')
@@ -204,6 +209,7 @@ export const OrderForm: React.FC<{
       items,
       discount,
       deliveryFee,
+      deliveryDate,
       notes: notes.trim(),
       agentId,
       zoneId,
@@ -425,6 +431,10 @@ export const OrderForm: React.FC<{
             <input type="number" min={0} step="0.01" value={deliveryFee || ''} placeholder="0" onChange={e => setDeliveryFee(Number(e.target.value))} className={fieldClass} />
           </Field>
         </div>
+
+        <Field label="تاريخ التسليم">
+          <input type="date" value={deliveryDate} onChange={e => setDeliveryDate(e.target.value)} className={fieldClass} />
+        </Field>
 
         <Field label="ملاحظات">
           <textarea value={notes} onChange={e => setNotes(e.target.value)} rows={2} className={fieldClass} />
