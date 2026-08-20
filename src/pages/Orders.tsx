@@ -3,7 +3,7 @@ import { useAppStore } from '../store';
 import { supabase } from '../db/supabase';
 import {
   Plus, Search, Eye, Truck, CheckCircle2, ShoppingCart, Trash2, X, Pencil,
-  SlidersHorizontal, RefreshCw, Rows3, Images, ListTree,
+  SlidersHorizontal, RefreshCw, Rows3, Images, ListTree, ChevronDown,
 } from 'lucide-react';
 import { motion, useReducedMotion } from 'motion/react';
 import { OrderStatus } from '../types';
@@ -76,6 +76,8 @@ const SELECT_ALL_CAP = 2000;
 const PAGE_SIZES = [24, 50, 100];
 const PAGE_SIZE_KEY = 'orders.pageSize';
 const GROUP_CAP = 2000;
+/** Sections per page in the grouped view — a group is many rows tall. */
+const GROUP_PAGE_SIZE = 8;
 
 type OrderView = 'list' | 'images' | 'grouped';
 
@@ -154,6 +156,8 @@ export const Orders: React.FC<OrdersProps> = ({ page, onPage, recordId, onRecord
   const [notice, setNotice] = useState('');
   const [halting, setHalting] = useState<{ ids: string[]; status: OrderStatus } | null>(null);
   const [partial, setPartial] = useState<Order | null>(null);
+  /** Groups folded shut, by group key — kept across pages and regroupings. */
+  const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
 
   const still = useReducedMotion();
 
@@ -268,6 +272,12 @@ export const Orders: React.FC<OrdersProps> = ({ page, onPage, recordId, onRecord
     () => groupOrders(groupedResult.rows, groupBy, salesReps, statusLabels),
     [groupedResult.rows, groupBy, salesReps],
   );
+  // The rows are grouped whole — splitting them by page would scatter one
+  // customer across sections — so it is the finished SECTIONS that are paged.
+  // The offset is shared with the row list, hence the clamp: 100 rows deep is
+  // page 4 there and past the end here.
+  const groupPage = Math.min(page, Math.max(0, Math.ceil(groupedOrders.length / GROUP_PAGE_SIZE) - 1));
+  const pagedGroups = groupedOrders.slice(groupPage * GROUP_PAGE_SIZE, (groupPage + 1) * GROUP_PAGE_SIZE);
 
   // A link can point at an order the current page or filters do not include, so
   // the one the URL names is fetched on its own when the list does not hold it.
@@ -1040,8 +1050,12 @@ export const Orders: React.FC<OrdersProps> = ({ page, onPage, recordId, onRecord
                 عُرض أول {GROUP_CAP.toLocaleString('en-US')} طلب فقط. ضيّق المرشّحات لرؤية تجميع كامل لبقية النتائج.
               </p>
             )}
-            {groupedOrders.map(group => {
+            {pagedGroups.map((group, groupIndex) => {
               const allGroupSelected = group.orders.every(order => selected.has(order.id));
+              const shut = collapsed.has(group.key);
+              // The key can be any customer or product name, so it is the
+              // position that names the panel — an id must be markup-safe.
+              const panelId = `order-group-${groupIndex}`;
               return (
                 <section key={group.key} className="overflow-hidden rounded-2xl border border-surface-200 bg-white">
                   <div className={`flex flex-wrap items-center gap-3 border-b border-surface-200 bg-surface-50 px-4 py-3 ${
@@ -1060,18 +1074,37 @@ export const Orders: React.FC<OrdersProps> = ({ page, onPage, recordId, onRecord
                       aria-label={`تحديد مجموعة ${group.label}`}
                       className={checkboxClass}
                     />
-                    <h3 className="me-auto font-black text-surface-900">{group.label}</h3>
-                    <span className="rounded-lg bg-white px-2.5 py-1 text-xs font-bold text-surface-700 ring-1 ring-surface-200">
-                      {group.orderCount.toLocaleString('en-US')} طلب
-                    </span>
-                    <span className="text-xs font-bold text-surface-500">
-                      {group.units.toLocaleString('en-US')} قطعة
-                    </span>
-                    <span className="font-black tabular-nums text-surface-900">
-                      {group.totalKind === 'lines' ? 'قيمة السطور ' : 'الإجمالي '}{money(group.total)}
-                    </span>
+                    {/* The whole summary is the toggle — the totals stay
+                        readable while the rows under them are folded away. */}
+                    <button
+                      type="button"
+                      onClick={() => setCollapsed(current => {
+                        const next = new Set(current);
+                        if (shut) next.delete(group.key); else next.add(group.key);
+                        return next;
+                      })}
+                      aria-expanded={!shut}
+                      aria-controls={panelId}
+                      className="flex flex-1 flex-wrap items-center gap-3 rounded-lg text-right focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500"
+                    >
+                      <ChevronDown
+                        size={18}
+                        aria-hidden
+                        className={`shrink-0 text-surface-500 transition-transform ${shut ? 'rotate-90' : ''}`}
+                      />
+                      <h3 className="me-auto font-black text-surface-900">{group.label}</h3>
+                      <span className="rounded-lg bg-white px-2.5 py-1 text-xs font-bold text-surface-700 ring-1 ring-surface-200">
+                        {group.orderCount.toLocaleString('en-US')} طلب
+                      </span>
+                      <span className="text-xs font-bold text-surface-500">
+                        {group.units.toLocaleString('en-US')} قطعة
+                      </span>
+                      <span className="font-black tabular-nums text-surface-900">
+                        {group.totalKind === 'lines' ? 'قيمة السطور ' : 'الإجمالي '}{money(group.total)}
+                      </span>
+                    </button>
                   </div>
-                  <div className="overflow-x-auto">
+                  <div id={panelId} hidden={shut} className="overflow-x-auto">
                     <table className="w-full text-sm text-right">
                       <thead className="bg-white text-xs font-bold text-surface-500">
                         <tr>
@@ -1168,7 +1201,15 @@ export const Orders: React.FC<OrdersProps> = ({ page, onPage, recordId, onRecord
           </div>
         )}
 
-        {view !== 'grouped' && (
+        {view === 'grouped' ? (
+          <Pagination
+            page={groupPage}
+            total={groupedOrders.length}
+            pageSize={GROUP_PAGE_SIZE}
+            onPage={onPage}
+            loading={groupedResult.loading}
+          />
+        ) : (
           <Pagination page={page} total={list.total} pageSize={pageSize} onPage={onPage} loading={list.loading} />
         )}
       </div>
