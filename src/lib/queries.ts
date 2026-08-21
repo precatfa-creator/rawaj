@@ -427,6 +427,7 @@ export const searchOptions = async (
   match: Record<string, string | undefined> = {},
   limit = 30,
   matchIn: Record<string, string[]> = {},
+  minimum: Record<string, number> = {},
 ): Promise<Record<string, unknown>[]> => {
   let request = supabase.from(table).select(columns);
   Object.entries(match).forEach(([column, value]) => {
@@ -434,6 +435,9 @@ export const searchOptions = async (
   });
   Object.entries(matchIn).forEach(([column, values]) => {
     if (values.length > 0) request = request.in(column, values);
+  });
+  Object.entries(minimum).forEach(([column, value]) => {
+    request = request.gt(column, value);
   });
   const normalized = normalizeArabic(term);
   if (normalized) request = request.ilike('search_text', `%${normalized}%`);

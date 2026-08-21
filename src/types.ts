@@ -48,11 +48,40 @@ export interface Product {
   defaultSerial: string;
   colors: string[];
   sizes: string[];
+  /** Ordered option axes used to build variants, for example Color then Size. */
+  variantOptions: ProductVariantOption[];
+  /** Loaded only by flows that need combination-level inventory. */
+  variants?: ProductVariant[];
   stock: number;
   minStock: number;
   status: 'active' | 'draft' | 'out_of_stock';
   addedAt: string;
   salesCount: number;
+}
+
+export interface ProductVariantOption {
+  /** Stable across renaming, so an option name can change without changing stock rows. */
+  id: string;
+  name: string;
+  values: string[];
+}
+
+export interface ProductVariant {
+  id: string;
+  productId: string;
+  /** Option id -> chosen value. */
+  optionValues: Record<string, string>;
+  /** Canonical identity generated from the ordered option values. */
+  optionKey: string;
+  sku: string;
+  stock: number;
+  active: boolean;
+}
+
+/** A snapshot carried by an order line, so old orders survive option renames. */
+export interface OrderVariantValue {
+  option: string;
+  value: string;
 }
 
 export interface Customer {
@@ -81,6 +110,10 @@ export interface OrderItem {
   image: string;
   /** Chosen from the product's `sizes` when it has any. Empty when it does not. */
   size?: string;
+  /** Exact stock row reserved by this line. Absent on simple/legacy products. */
+  variantId?: string;
+  /** Human-readable selection as it was when the order was saved. */
+  variantValues?: OrderVariantValue[];
   /**
    * How many of `quantity` actually reached the customer.
    *
@@ -161,6 +194,9 @@ export interface StockEntry {
   balance: number;
   note: string;
   orderId?: string;
+  variantId?: string;
+  /** Variant stock immediately after this movement; absent for simple products. */
+  variantBalance?: number;
   createdAt: string;
 }
 

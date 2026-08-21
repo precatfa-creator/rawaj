@@ -1,4 +1,4 @@
-import React, { FormEvent, useRef, useState } from 'react';
+import React, { FormEvent, useEffect, useRef, useState } from 'react';
 import { money } from './ui';
 import { Trash2 } from 'lucide-react';
 import { Field, Modal, fieldClass, ghostButton, primaryButton } from './Modal';
@@ -8,12 +8,17 @@ import { Combobox } from './Combobox';
 import { createOrder, newId, orderTotals, updateOrder } from '../lib/mutations';
 import { assignableReps, orderCommission, repCoversZone } from '../lib/commission';
 import { searchOptions } from '../lib/queries';
-import type { Customer, DeliveryZone, Order, OrderItem, Product, SalesRep } from '../types';
+import { nextVariantForOrder, variantLabel, variantSnapshot } from '../lib/variants';
+import { supabase } from '../db/supabase';
+import type {
+  Customer, DeliveryZone, Order, OrderItem, Product, ProductVariant, ProductVariantOption, SalesRep,
+} from '../types';
 
-/** Identifies a line: the same product in two sizes is two lines, not one. */
-const lineKey = (item: Pick<OrderItem, 'productId' | 'size'>) => `${item.productId}::${item.size ?? ''}`;
+/** Identifies a line: two variants of the same product are two stock reservations. */
+const lineKey = (item: Pick<OrderItem, 'productId' | 'variantId' | 'size'>) =>
+  `${item.productId}::${item.variantId ?? item.size ?? ''}`;
 
-const PRODUCT_PICK_COLUMNS = 'id,name,sellingPrice:selling_price,stock,images,sizes';
+const PRODUCT_PICK_COLUMNS = 'id,name,sellingPrice:selling_price,stock,images,sizes,variantOptions:variant_options';
 
 /**
  * Composing a new order, and editing an existing one.
@@ -59,6 +64,8 @@ export const OrderForm: React.FC<{
    * always in `products`.
    */
   const [sizesById, setSizesById] = useState<Record<string, string[]>>({});
+  const [variantsById, setVariantsById] = useState<Record<string, ProductVariant[]>>({});
+  const [variantOptionsById, setVariantOptionsById] = useState<Record<string, ProductVariantOption[]>>({});
 
   const [seeded, setSeeded] = useState<string | null>(null);
   const key = order?.id ?? 'new';
@@ -83,8 +90,46 @@ export const OrderForm: React.FC<{
         products.find(product => product.id === item.productId)?.sizes ?? [],
       ]),
     ));
+    setVariantsById({});
+    setVariantOptionsById(Object.fromEntries(
+      (order?.items ?? []).map(item => [
+        item.productId,
+        products.find(product => product.id === item.productId)?.variantOptions ?? [],
+      ]),
+    ));
   }
   if (!open && seeded !== null) setSeeded(null);
+
+  useEffect(() => {
+    if (!open || !order) return;
+    const productIds = [...new Set(order.items.map(item => item.productId))];
+    if (productIds.length === 0) return;
+    let active = true;
+    void Promise.all([
+      supabase.from('product_variants')
+        .select('id,productId:product_id,optionValues:option_values,optionKey:option_key,sku,stock,active')
+        .in('product_id', productIds).eq('active', true),
+      supabase.from('products').select('id,variantOptions:variant_options,sizes').in('id', productIds),
+    ]).then(([variantRows, productRows]) => {
+        if (variantRows.error) console.error('order product variants failed', variantRows.error);
+        if (productRows.error) console.error('order product options failed', productRows.error);
+        if (!active) return;
+        const grouped: Record<string, ProductVariant[]> = {};
+        ((variantRows.data ?? []) as unknown as ProductVariant[]).forEach(variant => {
+          (grouped[variant.productId] ??= []).push(variant);
+        });
+        setVariantsById(grouped);
+        setVariantOptionsById(current => ({
+          ...current,
+          ...Object.fromEntries((productRows.data ?? []).map(row => [row.id, row.variantOptions ?? []])),
+        }));
+        setSizesById(current => ({
+          ...current,
+          ...Object.fromEntries((productRows.data ?? []).map(row => [row.id, row.sizes ?? []])),
+        }));
+      });
+    return () => { active = false; };
+  }, [open, order?.id]);
 
   // Closing a half-filled order by clicking the backdrop is the one way to lose
   // work in this dialog, so it asks first.
@@ -147,6 +192,15 @@ export const OrderForm: React.FC<{
   );
 
   const rep = salesReps.find(r => r.id === agentId);
+  const availableProducts = products.filter(product => product.stock > 0);
+
+  const reservedVariantQuantity = (variantId: string): number => {
+    if (!order || ['canceled', 'returned'].includes(order.status)) return 0;
+    return order.items.reduce(
+      (sum, item) => sum + (item.variantId === variantId ? item.quantity : 0),
+      0,
+    );
+  };
 
   const addItem = async (productId: string) => {
     // The picker can return a product outside the preloaded slice, so fall back
@@ -158,15 +212,34 @@ export const OrderForm: React.FC<{
       if (!row) return;
       product = {
         id: row.id, name: row.name, sellingPrice: Number(row.sellingPrice),
-        images: (row.images ?? []), sizes: (row.sizes ?? []),
+        images: (row.images ?? []), sizes: (row.sizes ?? []), variantOptions: (row.variantOptions ?? []),
       } as Product;
     }
 
     const sizes = product.sizes ?? [];
+    const variantOptions = product.variantOptions ?? [];
     setSizesById(current => ({ ...current, [product.id]: sizes }));
+    setVariantOptionsById(current => ({ ...current, [product.id]: variantOptions }));
+
+    let productVariants = variantsById[product.id] ?? [];
+    if (variantOptions.length > 0 && productVariants.length === 0) {
+      const { data, error: queryError } = await supabase.from('product_variants')
+        .select('id,productId:product_id,optionValues:option_values,optionKey:option_key,sku,stock,active')
+        .eq('product_id', product.id).eq('active', true).order('option_key');
+      if (queryError) { console.error('product variants failed', queryError); return; }
+      productVariants = (data ?? []) as unknown as ProductVariant[];
+      setVariantsById(current => ({ ...current, [product.id]: productVariants }));
+    }
+
+    const reservedItems = order && !['canceled', 'returned'].includes(order.status) ? order.items : [];
+    const variant = nextVariantForOrder(productVariants, items, reservedItems) as ProductVariant | undefined;
+    if (variantOptions.length > 0 && !variant) {
+      setError('لا توجد تركيبة أخرى متاحة من هذا المنتج في المخزون.');
+      return;
+    }
 
     const size = sizes[0] ?? '';
-    const target = lineKey({ productId, size });
+    const target = lineKey({ productId, size, variantId: variant?.id });
     setItems(current =>
       current.some(item => lineKey(item) === target)
         ? current.map(item => lineKey(item) === target ? { ...item, quantity: item.quantity + 1 } : item)
@@ -176,7 +249,10 @@ export const OrderForm: React.FC<{
             quantity: 1,
             price: product.sellingPrice,
             image: product.images[0] ?? '',
-            size,
+            ...(variant ? {
+              variantId: variant.id,
+              variantValues: variantSnapshot(variantOptions, variant),
+            } : { size }),
           }],
     );
   };
@@ -187,17 +263,28 @@ export const OrderForm: React.FC<{
   const removeItem = (target: string) =>
     setItems(current => current.filter(item => lineKey(item) !== target));
 
+  const changeVariant = (
+    target: string,
+    variant: ProductVariant,
+    options: ProductVariantOption[],
+  ) => setItems(current => current.map(item => lineKey(item) === target ? {
+    ...item,
+    variantId: variant.id,
+    variantValues: variantSnapshot(options, variant),
+    size: undefined,
+  } : item));
+
   const submit = async (event: FormEvent) => {
     event.preventDefault();
     if (!customerId || items.length === 0) {
       setError('اختر عميلاً وأضف منتجاً واحداً على الأقل.');
       return;
     }
-    // Two lines of the same product in the same size would be one line the
+    // Two lines of the same product variant would be one line the
     // database sums anyway; catching it here explains why.
     const keys = items.map(lineKey);
     if (new Set(keys).size !== keys.length) {
-      setError('هناك سطران لنفس المنتج بنفس المقاس. ادمجهما في سطر واحد.');
+      setError('هناك سطران لنفس تركيبة المنتج. ادمجهما في سطر واحد.');
       return;
     }
 
@@ -298,21 +385,23 @@ export const OrderForm: React.FC<{
 
         <div>
           <span className="block text-sm font-bold text-surface-700 mb-1.5">المنتجات</span>
-          {products.length === 0 ? (
+          {availableProducts.length === 0 ? (
             <p className="text-sm text-surface-500 bg-surface-50 border border-surface-200 rounded-xl p-3">
-              لا توجد منتجات في هذا المتجر. أضف منتجاً أولاً.
+              لا توجد منتجات متاحة في المخزون.
             </p>
           ) : (
             <Combobox
               label="إضافة منتج إلى الطلب"
               value=""
               onChange={productId => { if (productId) void addItem(productId); }}
-              options={products.map(p => ({
+              options={availableProducts.map(p => ({
                 value: p.id,
                 label: p.name,
                 hint: `${money(p.sellingPrice)} · المخزون ${p.stock}`,
               }))}
-              onSearch={async term => (await searchOptions('products', PRODUCT_PICK_COLUMNS, term, { store_id: storeId }))
+              onSearch={async term => (await searchOptions(
+                'products', PRODUCT_PICK_COLUMNS, term, { store_id: storeId }, 30, {}, { stock: 0 },
+              ))
                 .map(row => ({
                   value: row.id as string,
                   label: row.name as string,
@@ -327,10 +416,37 @@ export const OrderForm: React.FC<{
               {items.map(item => {
                 const target = lineKey(item);
                 const sizes = sizesById[item.productId] ?? [];
+                const variants = variantsById[item.productId] ?? [];
+                const variantOptions = variantOptionsById[item.productId] ?? [];
+                const availableVariants = variants.filter(variant =>
+                  variant.stock + reservedVariantQuantity(variant.id) > 0);
                 return (
                   <li key={target} className="flex flex-wrap items-center gap-3 bg-surface-50 border border-surface-200 rounded-xl p-3">
                     <span className="flex-1 min-w-40 font-semibold text-surface-900 truncate">{item.productName}</span>
-                    {sizes.length > 0 ? (
+                    {variantOptions.length > 0 ? (
+                      availableVariants.length > 0 ? (
+                        <Combobox
+                          size="sm"
+                          label={`تركيبة ${item.productName}`}
+                          value={item.variantId ?? ''}
+                          onChange={id => {
+                            const variant = availableVariants.find(row => row.id === id);
+                            if (variant) changeVariant(target, variant, variantOptions);
+                          }}
+                          options={availableVariants.map(variant => ({
+                            value: variant.id,
+                            label: variantOptions.map(option => variant.optionValues[option.id]).filter(Boolean).join(' · '),
+                            hint: `المتاح ${variant.stock + reservedVariantQuantity(variant.id)}`,
+                          }))}
+                          placeholder="التركيبة"
+                          className="w-48"
+                        />
+                      ) : (
+                        <span className="text-xs font-bold text-surface-600">
+                          {variantLabel(item.variantValues) || 'تركيبة غير متاحة'}
+                        </span>
+                      )
+                    ) : sizes.length > 0 ? (
                       <Combobox
                         size="sm"
                         label={`مقاس ${item.productName}`}

@@ -29,11 +29,12 @@ const KIND_TONES: Record<StockKind, string> = {
 
 /** The row plus the embedded product, which is what a person reads it by. */
 interface MovementRow extends StockEntry {
-  product: { name: string; sku: string } | null;
+  product: { name: string; sku: string; variantOptions: Array<{ id: string; name: string }> } | null;
+  variant: { optionValues: Record<string, string> } | null;
 }
 
 const COLUMNS =
-  'id,productId:product_id,storeId:store_id,kind,quantity,balance,note,orderId:order_id,createdAt:created_at,product:products(name,sku)';
+  'id,productId:product_id,storeId:store_id,kind,quantity,balance,note,orderId:order_id,variantId:variant_id,variantBalance:variant_balance,createdAt:created_at,product:products(name,sku,variantOptions:variant_options),variant:product_variants(optionValues:option_values)';
 
 /**
  * Every inventory movement in this store, newest first.
@@ -130,6 +131,11 @@ export const StockMovements: React.FC<PagedProps> = ({ page, onPage }) => {
                   {entry.product?.sku && (
                     <span className="block text-xs font-medium text-surface-500" dir="ltr">{entry.product.sku}</span>
                   )}
+                  {entry.variant && (
+                    <span className="block text-xs font-medium text-primary-700">
+                      {(entry.product?.variantOptions ?? []).map(option => entry.variant?.optionValues[option.id]).filter(Boolean).join(' · ')}
+                    </span>
+                  )}
                 </td>
                 <td className="px-5 py-3.5">
                   <Pill tone={KIND_TONES[entry.kind]}>{KIND_LABELS[entry.kind] ?? entry.kind}</Pill>
@@ -140,7 +146,7 @@ export const StockMovements: React.FC<PagedProps> = ({ page, onPage }) => {
                     {entry.quantity > 0 ? '+' : ''}{count(entry.quantity)}
                   </span>
                 </td>
-                <td className="px-5 py-3.5 text-surface-700 tabular-nums">{count(entry.balance)}</td>
+                <td className="px-5 py-3.5 text-surface-700 tabular-nums">{count(entry.variantBalance ?? entry.balance)}</td>
                 <td className="px-5 py-3.5 text-surface-500">{entry.note || '—'}</td>
               </tr>
             ))}

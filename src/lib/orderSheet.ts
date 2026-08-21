@@ -1,5 +1,6 @@
 import { toNumber } from './sheet';
 import type { OrderItem } from '../types';
+import { variantLabel } from './variants';
 
 /**
  * An order's lines, in one spreadsheet cell.
@@ -34,7 +35,8 @@ export const formatOrderItems = (items: OrderItem[], skuById: Map<string, string
   items
     .map(item => {
       const ident = skuById.get(item.productId) || item.productName;
-      const size = item.size ? ` # ${item.size}` : '';
+      const selection = variantLabel(item.variantValues) || item.size;
+      const size = selection ? ` # ${selection}` : '';
       return `${ident} * ${item.quantity} @ ${item.price}${size}`;
     })
     .join(' ؛ ');

@@ -1,16 +1,21 @@
-import React, { FormEvent, useRef, useState } from 'react';
+import React, { FormEvent, useEffect, useRef, useState } from 'react';
+import { AlertTriangle, Check, Plus, Trash2, X } from 'lucide-react';
 import { Field, Modal, fieldClass, ghostButton, primaryButton } from './Modal';
 import { ErrorNote } from './Confirm';
 import { Combobox } from './Combobox';
 import { ImageUploader } from './ImageUploader';
 import { useAppStore } from '../store';
 import { splitList } from '../lib/text';
+import { addOptionValues, variantCombinations, variantKey } from '../lib/variants';
+import { supabase } from '../db/supabase';
 import {
   createCategory, createCity, createMunicipality, createZoneScope,
   newId, saveCustomer, saveProduct, saveSalesRep, saveStore, saveZone,
   type CustomerDraft, type ProductDraft, type SalesRepDraft, type WriteResult, type ZoneDraft,
 } from '../lib/mutations';
-import type { Customer, DeliveryZone, Product, SalesRep, Store, ZoneRegion } from '../types';
+import type {
+  Customer, DeliveryZone, Product, ProductVariant, ProductVariantOption, SalesRep, Store, ZoneRegion,
+} from '../types';
 
 /** Shared submit plumbing: pending state, and a failure the user can read. */
 const useSubmit = (onDone: () => void) => {
@@ -376,6 +381,83 @@ export const StoreForm: React.FC<{
   );
 };
 
+/**
+ * The values of one variant axis, entered as removable chips.
+ *
+ * This used to be a comma-separated text box that re-parsed on every keystroke.
+ * Two problems: the matrix below rebuilt itself mid-word, and because a
+ * combination carries its stock over by exact option key, going back to fix a
+ * typo in a saved value silently reset that combination's allocated quantity.
+ * A value is now committed once — on Enter, on a separator, or on blur — so the
+ * matrix rebuilds once per finished value rather than once per letter.
+ *
+ * `addOptionValues` does the parsing on `splitList`, so an Arabic comma pasted
+ * from a spreadsheet splits the same way it does everywhere else in the app.
+ */
+const ValueChips: React.FC<{
+  values: string[];
+  onChange: (values: string[]) => void;
+  label: string;
+  placeholder: string;
+}> = ({ values, onChange, label, placeholder }) => {
+  const [text, setText] = useState('');
+
+  const commit = (raw: string) => {
+    const next = addOptionValues(values, raw);
+    if (next.length !== values.length) onChange(next);
+    setText('');
+  };
+
+  return (
+    <div
+      onClick={event => event.currentTarget.querySelector('input')?.focus()}
+      className={`${fieldClass} flex flex-wrap items-center gap-1.5 py-2 cursor-text
+        focus-within:ring-2 focus-within:ring-primary-500/30 focus-within:border-primary-500`}
+    >
+      {values.map(value => (
+        <span
+          key={value}
+          className="inline-flex items-center gap-1 rounded-lg border border-primary-200 bg-primary-50 px-2 py-1 text-xs font-bold text-primary-900"
+        >
+          {value}
+          <button
+            type="button"
+            onClick={() => onChange(values.filter(other => other !== value))}
+            aria-label={`حذف ${value} من ${label}`}
+            className="text-primary-700/70 hover:text-rose-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-rose-500 rounded"
+          >
+            <X size={12} />
+          </button>
+        </span>
+      ))}
+      <input
+        value={text}
+        aria-label={label}
+        /* Only the empty field is required: once a chip exists the axis is
+           complete, and whatever is half-typed after it is allowed to stay. */
+        required={values.length === 0}
+        placeholder={values.length === 0 ? placeholder : 'أضف قيمة…'}
+        onChange={event => {
+          const value = event.target.value;
+          if (/[,،;؛\n]/.test(value)) commit(value);
+          else setText(value);
+        }}
+        onKeyDown={event => {
+          if (event.key === 'Enter') {
+            // Enter inside a dialog form would otherwise submit the product.
+            event.preventDefault();
+            commit(text);
+          } else if (event.key === 'Backspace' && text === '' && values.length > 0) {
+            onChange(values.slice(0, -1));
+          }
+        }}
+        onBlur={() => commit(text)}
+        className="flex-1 min-w-24 bg-transparent py-0.5 outline-none"
+      />
+    </div>
+  );
+};
+
 // ---- product ----
 
 export const ProductForm: React.FC<{
@@ -386,11 +468,15 @@ export const ProductForm: React.FC<{
   const [draft, setDraft] = useState<ProductDraft>({
     id: '', storeId, name: '', description: '', sku: '', defaultSerial: '', category: '',
     purchasePrice: 0, sellingPrice: 0, stock: 0, minStock: 0, status: 'active', images: [], sizes: [],
+    variantOptions: [], variants: [],
     namingSeries: '',
   });
   // Held as the text the user is typing, not as the parsed array: splitting on
   // every keystroke would delete the separator the moment it was typed.
   const [sizesText, setSizesText] = useState('');
+  const [variantOptions, setVariantOptions] = useState<ProductVariantOption[]>([]);
+  const [savedVariantOptions, setSavedVariantOptions] = useState<ProductVariantOption[]>([]);
+  const [variants, setVariants] = useState<ProductVariant[]>([]);
   const { busy, error, submit } = useSubmit(onClose);
 
   const [seeded, setSeeded] = useState<string | null>(null);
@@ -412,9 +498,13 @@ export const ProductForm: React.FC<{
       status: product?.status ?? 'active',
       images: product?.images ?? [],
       sizes: product?.sizes ?? [],
+      variantOptions: product?.variantOptions ?? [],
+      variants: [],
       namingSeries: '',
     });
     setSizesText((product?.sizes ?? []).join('، '));
+    setVariantOptions(product?.variantOptions ?? []);
+    setVariants([]);
   }
   if (!open && seeded !== null) setSeeded(null);
 
@@ -422,6 +512,69 @@ export const ProductForm: React.FC<{
     setDraft(current => ({ ...current, [field]: value }));
 
   const margin = draft.sellingPrice - draft.purchasePrice;
+
+  useEffect(() => {
+    if (!open || !product || (product.variantOptions ?? []).length === 0) return;
+    let active = true;
+    void supabase.from('product_variants')
+      .select('id,productId:product_id,optionValues:option_values,optionKey:option_key,sku,stock,active')
+      .eq('product_id', product.id)
+      .eq('active', true)
+      .order('option_key')
+      .then(({ data, error: queryError }) => {
+        if (queryError) console.error('product variants failed', queryError);
+        if (active) setVariants((data ?? []) as unknown as ProductVariant[]);
+      });
+    return () => { active = false; };
+  }, [open, product?.id]);
+
+  useEffect(() => {
+    if (!open || !storeId) return;
+    let active = true;
+    void supabase.from('variant_option_catalog')
+      .select('id,name,values:option_values')
+      .eq('store_id', storeId)
+      .order('name')
+      .then(({ data, error: queryError }) => {
+        if (queryError) console.error('variant option catalogue failed', queryError);
+        if (active) setSavedVariantOptions((data ?? []) as unknown as ProductVariantOption[]);
+      });
+    return () => { active = false; };
+  }, [open, storeId]);
+
+  const rebuildVariants = (options: ProductVariantOption[]) => {
+    setVariantOptions(options);
+    setVariants(current => variantCombinations(options).map(optionValues => {
+      const optionKey = variantKey(options, optionValues);
+      return current.find(variant => variant.optionKey === optionKey) ?? {
+        id: newId(), productId: draft.id, optionValues, optionKey, sku: '', stock: 0, active: true,
+      };
+    }));
+  };
+
+  const addVariantOption = () => {
+    const option: ProductVariantOption = { id: newId(), name: '', values: [] };
+    rebuildVariants([...variantOptions, option]);
+  };
+
+  const addSavedVariantOption = (id: string) => {
+    const saved = savedVariantOptions.find(option => option.id === id);
+    if (!saved || variantOptions.some(option => option.id === id)) return;
+    const option = { ...saved, values: [...saved.values] };
+    rebuildVariants([...variantOptions, option]);
+  };
+
+  const updateVariantOption = (id: string, change: Partial<ProductVariantOption>) => {
+    rebuildVariants(variantOptions.map(option => option.id === id ? { ...option, ...change } : option));
+  };
+
+  const removeVariantOption = (id: string) => {
+    rebuildVariants(variantOptions.filter(option => option.id !== id));
+  };
+
+  const variantsWereConfigured = (product?.variantOptions ?? []).length > 0;
+  const canAllocateVariantStock = isNew || !variantsWereConfigured;
+  const variantStock = variants.reduce((sum, variant) => sum + variant.stock, 0);
 
   // An item saved before its category was deleted still shows its own value,
   // rather than silently reading as "no category".
@@ -439,26 +592,32 @@ export const ProductForm: React.FC<{
       <form
         id="entity-form"
         className="grid grid-cols-1 sm:grid-cols-2 gap-4"
-        onSubmit={submit(() => saveProduct({ ...draft, sizes: splitList(sizesText) }, isNew))}
+        onSubmit={submit(() => saveProduct({
+          ...draft,
+          stock: variantOptions.length > 0 ? variantStock : draft.stock,
+          sizes: splitList(sizesText),
+          variantOptions,
+          variants,
+        }, isNew))}
       >
         <div className="sm:col-span-2">
           <Field label="اسم المنتج">
             <input value={draft.name} onChange={e => set('name', e.target.value)} required className={fieldClass} />
           </Field>
         </div>
-        <Field label="رمز SKU" hint={isNew ? 'اتركه فارغاً ليُولَّد من تسلسل الترقيم.' : undefined}>
-          <input value={draft.sku} onChange={e => set('sku', e.target.value)} dir="ltr" className={fieldClass} />
-        </Field>
-        {isNew && !draft.sku.trim() && (
+        {/* ponytail: the SKU and default-serial inputs are hidden, not removed.
+            Both columns still exist and are still written — a new product's SKU
+            comes from the naming series below, and editing one carries its
+            stored SKU and serial through untouched. Import/export, search and
+            the order sheet all still use them. Restore the two <Field> blocks
+            (see git history for this file) to put them back. */}
+        {isNew && (
           <NamingSeriesField
             doctype="products"
             value={draft.namingSeries ?? ''}
             onChange={value => set('namingSeries', value)}
           />
         )}
-        <Field label="الرقم التسلسلي الافتراضي" hint="يُستخدم عند عدم تسجيل رقم خاص بالقطعة.">
-          <input value={draft.defaultSerial} onChange={e => set('defaultSerial', e.target.value)} dir="ltr" className={fieldClass} />
-        </Field>
         {/* The value written is the category *name*: products.category stays a
             text column, which is what order_lines and the reports group on. */}
         <Combobox
@@ -474,45 +633,208 @@ export const ProductForm: React.FC<{
         <Field label="سعر الشراء (د.ل)">
           <input type="number" min={0} step="0.01" value={draft.purchasePrice || ''} placeholder="0" onChange={e => set('purchasePrice', Number(e.target.value))} required className={fieldClass} />
         </Field>
-        <Field label="سعر البيع (د.ل)" hint={`الربح المحتسب: ${margin.toLocaleString('en-US')} د.ل`}>
+        <Field
+          label="سعر البيع (د.ل)"
+          hint={
+            <span className={margin < 0 ? 'text-rose-700 font-bold' : margin > 0 ? 'text-emerald-700 font-bold' : undefined}>
+              {margin < 0 ? 'خسارة محتسبة' : 'الربح المحتسب'}: {Math.abs(margin).toLocaleString('en-US')} د.ل
+            </span>
+          }
+        >
           <input type="number" min={0} step="0.01" value={draft.sellingPrice || ''} placeholder="0" onChange={e => set('sellingPrice', Number(e.target.value))} required className={fieldClass} />
         </Field>
         {/* Editable exactly once. After creation the quantity is the running
             total of the stock ledger, and typing over it would be a silent lie:
             saveProduct drops `stock` from every update. */}
-        <Field
-          label={isNew ? 'الكمية الابتدائية' : 'المخزون الحالي'}
-          hint={isNew ? undefined : 'يتغيّر بحركات المخزون فقط — استخدم «حركة مخزون».'}
-        >
-          <input
-            type="number"
-            min={0}
-            value={draft.stock || ''}
-            placeholder="0"
-            onChange={e => set('stock', Number(e.target.value))}
-            required={isNew}
-            readOnly={!isNew}
-            aria-readonly={!isNew}
-            tabIndex={isNew ? undefined : -1}
-            className={`${fieldClass} ${isNew ? '' : 'bg-surface-100 text-surface-500 cursor-not-allowed'}`}
-          />
-        </Field>
+        {variantOptions.length === 0 && (
+          <Field
+            label={isNew ? 'الكمية الابتدائية' : 'المخزون الحالي'}
+            hint={isNew ? undefined : 'يتغيّر بحركات المخزون فقط — استخدم «حركة مخزون».'}
+          >
+            <input
+              type="number"
+              min={0}
+              value={draft.stock || ''}
+              placeholder="0"
+              onChange={e => set('stock', Number(e.target.value))}
+              required={isNew}
+              readOnly={!isNew}
+              aria-readonly={!isNew}
+              tabIndex={isNew ? undefined : -1}
+              className={`${fieldClass} ${isNew ? '' : 'bg-surface-100 text-surface-500 cursor-not-allowed'}`}
+            />
+          </Field>
+        )}
         <Field label="حد التنبيه">
           <input type="number" min={0} value={draft.minStock || ''} placeholder="0" onChange={e => set('minStock', Number(e.target.value))} required className={fieldClass} />
         </Field>
-        {/* One quantity per item, not per size: the ledger counts pieces, and
-            splitting stock by size would need a row per variant. The sizes
-            listed here are what an order line can choose from. */}
-        <div className="sm:col-span-2">
-          <Field label="المقاسات" hint="افصل بينها بفاصلة — تظهر كخيارات عند إضافة المنتج إلى طلب. اتركها فارغة إن كان المنتج بمقاس واحد.">
-            <input
-              value={sizesText}
-              onChange={e => setSizesText(e.target.value)}
-              placeholder="S، M، L، XL"
-              className={fieldClass}
-            />
-          </Field>
-        </div>
+        <section className="sm:col-span-2 rounded-2xl border border-surface-200 bg-surface-50 p-4 space-y-4">
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div>
+              <h3 className="flex items-center gap-2 font-black text-surface-900">
+                متغيرات المنتج
+                {variants.length > 0 && (
+                  <span className="rounded-lg border border-primary-200 bg-primary-50 px-2 py-0.5 text-xs font-bold text-primary-800 tabular-nums">
+                    {variants.length} تركيبة
+                  </span>
+                )}
+              </h3>
+              <p className="text-xs text-surface-500 mt-1">أضف اللون، المقاس، أو أي خيار آخر؛ لكل تركيبة مخزون مستقل.</p>
+            </div>
+            <div className="flex flex-wrap items-center gap-2">
+              {savedVariantOptions.some(saved => !variantOptions.some(option => option.id === saved.id)) && (
+                <Combobox
+                  label="إضافة خيار محفوظ"
+                  value=""
+                  onChange={addSavedVariantOption}
+                  options={savedVariantOptions
+                    .filter(saved => !variantOptions.some(option => option.id === saved.id))
+                    .map(saved => ({
+                      value: saved.id,
+                      label: saved.name,
+                      hint: saved.values.join('، '),
+                    }))}
+                  placeholder="اختر خياراً محفوظاً…"
+                  className="w-56"
+                />
+              )}
+              <button type="button" onClick={addVariantOption} className={ghostButton}>
+                <Plus size={16} /> خيار جديد
+              </button>
+            </div>
+          </div>
+
+          {variantOptions.length === 0 ? (
+            <p className="rounded-xl border border-dashed border-surface-300 bg-white p-4 text-sm text-surface-500 text-center">
+              هذا منتج بسيط بمخزون واحد. اختر خياراً محفوظاً أو أنشئ خياراً جديداً.
+            </p>
+          ) : (
+            <>
+              {/* One hint for the whole list rather than one per input: repeating it
+                  under every row is noise, and a hint inside a single Field is what
+                  made the two inputs sit at different heights. */}
+              <p className="text-xs text-surface-500">اكتب القيمة ثم اضغط Enter أو فاصلة لإضافتها.</p>
+
+              <div className="space-y-3">
+                {variantOptions.map((option, index) => (
+                  <div key={option.id} className="grid grid-cols-1 sm:grid-cols-[10rem_1fr_auto] gap-2 items-end">
+                    <Field label={`اسم الخيار ${index + 1}`}>
+                      <input
+                        value={option.name}
+                        onChange={event => updateVariantOption(option.id, { name: event.target.value })}
+                        placeholder={index === 0 ? 'اللون' : 'المقاس'}
+                        required
+                        className={fieldClass}
+                      />
+                    </Field>
+                    <Field label="القيم">
+                      <ValueChips
+                        values={option.values}
+                        onChange={values => updateVariantOption(option.id, { values })}
+                        label={option.name || `الخيار ${index + 1}`}
+                        placeholder={index === 0 ? 'أسود' : 'S'}
+                      />
+                    </Field>
+                    <button
+                      type="button"
+                      onClick={() => removeVariantOption(option.id)}
+                      aria-label={`حذف الخيار ${option.name || index + 1}`}
+                      className="inline-flex h-11 w-11 items-center justify-center rounded-xl text-rose-700 hover:bg-rose-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-rose-500"
+                    >
+                      <Trash2 size={18} />
+                    </button>
+                  </div>
+                ))}
+              </div>
+
+              {variants.length > 0 ? (
+                <div className="rounded-xl border border-surface-200 bg-white overflow-hidden">
+                  {/* Three axes of five values is 125 rows, which would bury the rest of
+                      the form. Only a long matrix gets its own scroll region: a colour ×
+                      size product is a dozen rows and reads better whole, without a
+                      second scrollbar inside the one the modal body already has. */}
+                  <div className={variants.length > 12 ? 'max-h-96 overflow-auto overscroll-contain' : ''}>
+                    <table className="w-full text-sm text-right">
+                      <thead className="text-surface-600">
+                        <tr>
+                          {/* One column per axis instead of one joined string: with two or
+                              more options the values line up and can be scanned down. */}
+                          {variantOptions.map((option, index) => (
+                            <th key={option.id} className="sticky top-0 z-10 bg-surface-100 px-3 py-2 font-bold whitespace-nowrap">
+                              {option.name || `الخيار ${index + 1}`}
+                            </th>
+                          ))}
+                          <th className="sticky top-0 z-10 bg-surface-100 px-3 py-2 font-bold w-32">المخزون</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-surface-100">
+                        {variants.map(variant => (
+                          <tr key={variant.id} className="hover:bg-surface-50">
+                            {variantOptions.map(option => (
+                              <td key={option.id} className="px-3 py-2 font-bold text-surface-800 whitespace-nowrap">
+                                {variant.optionValues[option.id] || '—'}
+                              </td>
+                            ))}
+                            <td className="px-3 py-2 w-32">
+                              <input
+                                type="number"
+                                min={0}
+                                inputMode="numeric"
+                                value={variant.stock || ''}
+                                placeholder="0"
+                                readOnly={!canAllocateVariantStock}
+                                aria-label={`مخزون ${variantOptions.map(option => variant.optionValues[option.id]).join(' ')}`}
+                                onChange={event => setVariants(current => current.map(row => row.id === variant.id
+                                  ? { ...row, stock: Number(event.target.value) }
+                                  : row))}
+                                className={`${fieldClass} py-1.5 tabular-nums ${canAllocateVariantStock ? '' : 'bg-surface-100 text-surface-500 cursor-not-allowed'}`}
+                              />
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                  <div className="flex items-center justify-between gap-3 border-t border-primary-100 bg-primary-50 px-3 py-2 font-black text-primary-900">
+                    <span>إجمالي المخزون</span>
+                    <span className="tabular-nums">{variantStock}</span>
+                  </div>
+                </div>
+              ) : (
+                /* An axis with a name but no values produces no combinations at all,
+                   which otherwise looks like the matrix failed to appear. */
+                <p className="rounded-xl border border-dashed border-surface-300 bg-white p-3 text-center text-xs text-surface-500">
+                  أضف قيمة واحدة على الأقل لكل خيار لتظهر التركيبات.
+                </p>
+              )}
+              {!isNew && !variantsWereConfigured && (
+                <p className={`flex items-start gap-2 rounded-xl border px-3 py-2 text-xs font-bold ${
+                  variantStock === product.stock
+                    ? 'border-emerald-200 bg-emerald-50 text-emerald-800'
+                    : 'border-amber-200 bg-amber-50 text-amber-800'
+                }`}>
+                  {variantStock === product.stock ? (
+                    <>
+                      <Check size={14} className="mt-0.5 shrink-0" aria-hidden />
+                      وُزّع المخزون الحالي ({product.stock}) بالكامل على التركيبات.
+                    </>
+                  ) : (
+                    <>
+                      <AlertTriangle size={14} className="mt-0.5 shrink-0" aria-hidden />
+                      وزّع المخزون الحالي ({product.stock}) بالكامل على التركيبات؛ الموزّع الآن {variantStock}،
+                      {variantStock < product.stock
+                        ? ` ويتبقّى ${product.stock - variantStock}.`
+                        : ` بزيادة ${variantStock - product.stock}.`}
+                    </>
+                  )}
+                </p>
+              )}
+              {!canAllocateVariantStock && (
+                <p className="text-xs text-surface-500">الكميات تتغيّر من «حركة مخزون» مع اختيار التركيبة.</p>
+              )}
+            </>
+          )}
+        </section>
         <Combobox
           showLabel
           label="الحالة"

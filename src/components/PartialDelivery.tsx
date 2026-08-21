@@ -4,6 +4,7 @@ import { Modal, ghostButton, primaryButton } from './Modal';
 import { ErrorNote } from './Confirm';
 import { money } from './ui';
 import { deliveredTotals, deliveredOf, isShort } from '../lib/orderMath';
+import { variantLabel } from '../lib/variants';
 import type { Order, OrderItem } from '../types';
 import type { WriteResult } from '../lib/mutations';
 
@@ -99,7 +100,7 @@ export const PartialDeliveryPrompt: React.FC<{
             {lines.map((item, index) => {
               const delivered = deliveredOf(item);
               return (
-                <tr key={`${item.productId}::${item.size ?? ''}`} className={delivered === 0 ? 'bg-surface-50/60' : ''}>
+                <tr key={`${item.productId}::${item.variantId ?? item.size ?? ''}`} className={delivered === 0 ? 'bg-surface-50/60' : ''}>
                   <td className="px-3 py-2.5">
                     {/* The checkbox is a shortcut for the two ends of the number
                         field beside it — all of them, or none. */}
@@ -116,6 +117,7 @@ export const PartialDeliveryPrompt: React.FC<{
                       {item.productName}
                     </span>
                     {item.size && <span className="text-xs text-surface-500 mr-2">({item.size})</span>}
+                    {item.variantValues && <span className="block text-xs text-surface-500">{variantLabel(item.variantValues)}</span>}
                   </td>
                   <td className="px-3 py-2.5 tabular-nums text-surface-600">{item.quantity}</td>
                   <td className="px-3 py-2.5">

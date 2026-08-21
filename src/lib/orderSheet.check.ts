@@ -17,6 +17,14 @@ assert.equal(
   'SKU-1 * 2 @ 120 # M ؛ SKU-1 * 1 @ 120 # L',
 );
 
+const variantItem: OrderItem = {
+  ...item('p1', 3, 120),
+  variantId: 'black-s',
+  variantValues: [{ option: 'اللون', value: 'أسود' }, { option: 'المقاس', value: 'S' }],
+};
+assert.equal(formatOrderItems([variantItem], skus), 'SKU-1 * 3 @ 120 # اللون: أسود · المقاس: S');
+assert.equal(parseOrderItems(formatOrderItems([variantItem], skus)).lines[0].size, 'اللون: أسود · المقاس: S');
+
 // What was written reads back unchanged.
 const round = parseOrderItems(formatOrderItems([item('p1', 2, 120, 'M')], skus));
 assert.deepEqual(round.lines, [{ ident: 'SKU-1', quantity: 2, price: 120, size: 'M' }]);

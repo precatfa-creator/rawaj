@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { Check, Copy } from 'lucide-react';
+import { Check, ChevronLeft, ChevronRight, Copy } from 'lucide-react';
+import { Modal } from './Modal';
 
 /**
  * A short identifier that copies itself when clicked.
@@ -301,5 +302,115 @@ export const Thumb: React.FC<{
       onError={() => setFailed(true)}
       className={`${box} ${fit === 'contain' ? 'object-contain' : 'object-cover'}`}
     />
+  );
+};
+
+const lightboxArrow =
+  'absolute top-1/2 -translate-y-1/2 w-11 h-11 rounded-full grid place-items-center bg-white/90 border border-surface-200 text-surface-700 hover:text-surface-900 hover:bg-white shadow-lg transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500';
+
+/**
+ * Full-screen viewer for a product's photos.
+ *
+ * Built on the existing fullscreen `Modal` rather than a hand-rolled overlay:
+ * that already gives the top-layer stacking, focus trap and Escape-to-close
+ * this needs, and keeps the close button in the same place as every other
+ * dialog in the app.
+ *
+ * The index lives here and resets on open, so a caller only has to say which
+ * product is being looked at.
+ */
+export const Lightbox: React.FC<{
+  images: string[];
+  /** Names the image for assistive tech and titles the dialog. */
+  name: string;
+  open: boolean;
+  onClose: () => void;
+}> = ({ images, name, open, onClose }) => {
+  const [index, setIndex] = useState(0);
+
+  // A second product can be opened without the dialog closing in between.
+  useEffect(() => { if (open) setIndex(0); }, [open, images]);
+
+  // Wraps in both directions: at the last photo "next" is the first one, so
+  // the arrows never dead-end on a short gallery.
+  const step = (by: number) => setIndex(i => (i + by + images.length) % images.length);
+
+  useEffect(() => {
+    if (!open || images.length < 2) return;
+    const onKey = (event: KeyboardEvent) => {
+      // Reading runs right-to-left here, so the left arrow advances.
+      if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return;
+      event.preventDefault();
+      step(event.key === 'ArrowLeft' ? 1 : -1);
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [open, images.length]);
+
+  const src = images[index];
+
+  return (
+    <Modal
+      open={open}
+      title={images.length > 1 ? `${name} — ${index + 1}/${images.length}` : name}
+      onClose={onClose}
+      fullscreen
+    >
+      <div className="h-full flex flex-col gap-4">
+        <div className="flex-1 min-h-0 relative flex items-center justify-center">
+          {src ? (
+            <img src={src} alt={name} className="max-h-full max-w-full object-contain" />
+          ) : (
+            <span
+              role="img"
+              aria-label={name}
+              className={`w-40 h-40 rounded-3xl grid place-items-center font-black text-6xl ${toneFor(name)}`}
+            >
+              {initialsOf(name)}
+            </span>
+          )}
+
+          {images.length > 1 && (
+            <>
+              <button
+                type="button"
+                onClick={() => step(-1)}
+                aria-label="الصورة السابقة"
+                className={`${lightboxArrow} right-2`}
+              >
+                <ChevronRight size={22} />
+              </button>
+              <button
+                type="button"
+                onClick={() => step(1)}
+                aria-label="الصورة التالية"
+                className={`${lightboxArrow} left-2`}
+              >
+                <ChevronLeft size={22} />
+              </button>
+            </>
+          )}
+        </div>
+
+        {images.length > 1 && (
+          <div className="shrink-0 flex gap-2 overflow-x-auto pb-1">
+            {images.map((image, i) => (
+              <button
+                key={`${image}-${i}`}
+                type="button"
+                onClick={() => setIndex(i)}
+                aria-label={`الصورة ${i + 1}`}
+                aria-current={i === index}
+                className={`rounded-lg overflow-hidden shrink-0 border-2 transition-colors ${
+                  i === index ? 'border-primary-600' : 'border-transparent hover:border-surface-300'
+                }`}
+              >
+                <Thumb src={image} name={name} className="w-16 h-16" />
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
+    </Modal>
   );
 };

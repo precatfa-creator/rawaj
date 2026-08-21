@@ -15,6 +15,7 @@ import {
   isAuditFiltered, matchesAudit, nextAuditPage, type AuditFilter,
 } from '../lib/auditText';
 import { downloadXlsx, type SheetRow } from '../lib/sheet';
+import { variantLabel } from '../lib/variants';
 import type { DeliveryZone, Order, OrderStatus, SalesRep, StockKind } from '../types';
 
 
@@ -53,9 +54,11 @@ interface MovementRow {
   kind: StockKind;
   quantity: number;
   balance: number;
+  variantBalance: number | null;
   note: string;
   createdAt: string;
-  product: { name: string; sku: string } | null;
+  product: { name: string; sku: string; variantOptions: Array<{ id: string }> } | null;
+  variant: { optionValues: Record<string, string> } | null;
 }
 
 interface AuditRow {
@@ -107,7 +110,7 @@ const useRows = <T,>(
 const loadMovements = async (orderId: string): Promise<MovementRow[]> => {
   const { data, error } = await supabase
     .from('stock_entries')
-    .select('id,kind,quantity,balance,note,createdAt:created_at,product:products(name,sku)')
+    .select('id,kind,quantity,balance,variantBalance:variant_balance,note,createdAt:created_at,product:products(name,sku,variantOptions:variant_options),variant:product_variants(optionValues:option_values)')
     .eq('order_id', orderId)
     .order('created_at', { ascending: false });
   if (error) throw error;
@@ -469,12 +472,15 @@ export const OrderDetails: React.FC<{
               <Card title="المنتجات" aside={<span className="text-xs text-surface-500 tabular-nums">{units} قطعة</span>}>
                 <ul className="divide-y divide-surface-100">
                   {order.items.map((item, index) => (
-                    <li key={`${item.productId}-${item.size ?? ''}-${index}`} className="flex items-center gap-3 px-4 py-3">
+                    <li key={`${item.productId}-${item.variantId ?? item.size ?? ''}-${index}`} className="flex items-center gap-3 px-4 py-3">
                       {item.image
                         ? <img src={item.image} alt="" width={44} height={44} loading="lazy" className="w-11 h-11 rounded-lg object-cover border border-surface-200 shrink-0" />
                         : <span aria-hidden className="w-11 h-11 rounded-lg bg-surface-100 border border-surface-200 shrink-0" />}
                       <span className="flex-1 min-w-0">
                         <span className="block font-bold text-surface-900 truncate">{item.productName}</span>
+                        {item.variantValues && item.variantValues.length > 0 && (
+                          <span className="block text-xs text-surface-500 mt-0.5">{variantLabel(item.variantValues)}</span>
+                        )}
                         {item.size && <span className="block text-xs text-surface-500 mt-0.5">مقاس {item.size}</span>}
                       </span>
                       <span className="text-sm text-surface-500 tabular-nums whitespace-nowrap">
@@ -523,6 +529,11 @@ export const OrderDetails: React.FC<{
                       <span className="font-bold text-surface-900 flex-1 min-w-40 truncate">
                         {row.product?.name ?? 'منتج محذوف'}
                         {row.product?.sku && <span className="text-xs text-surface-500 font-mono mr-2" dir="ltr">{row.product.sku}</span>}
+                        {row.variant && (
+                          <span className="block text-xs text-primary-700">
+                            {(row.product?.variantOptions ?? []).map(option => row.variant?.optionValues[option.id]).filter(Boolean).join(' · ')}
+                          </span>
+                        )}
                       </span>
                       <span className="text-xs font-bold text-surface-600 bg-surface-100 border border-surface-200 rounded-lg px-2 py-1">
                         {KIND_LABELS[row.kind] ?? row.kind}
@@ -532,7 +543,7 @@ export const OrderDetails: React.FC<{
                       <span className={`font-black tabular-nums ${row.quantity < 0 ? 'text-rose-700' : 'text-emerald-700'}`} dir="ltr">
                         {row.quantity > 0 ? `+${row.quantity}` : row.quantity}
                       </span>
-                      <span className="text-xs text-surface-500 tabular-nums">الرصيد بعدها: {row.balance}</span>
+                      <span className="text-xs text-surface-500 tabular-nums">الرصيد بعدها: {row.variantBalance ?? row.balance}</span>
                       <span className="text-xs text-surface-500 w-full sm:w-auto">{dateTime.format(new Date(row.createdAt))}</span>
                     </li>
                   ))}

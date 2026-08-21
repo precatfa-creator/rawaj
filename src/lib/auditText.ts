@@ -39,6 +39,9 @@ export const FIELD_LABELS: Record<string, string> = {
   kind: 'نوع الحركة',
   category_id: 'التصنيف',
   sizes: 'المقاسات',
+  variant_options: 'خيارات المتغيرات',
+  variant_id: 'تركيبة المنتج',
+  variant_balance: 'رصيد التركيبة',
   image: 'الصورة',
   images: 'الصور',
   // people and places
@@ -87,8 +90,14 @@ export const describeOrderItems = (items: unknown[]): string => {
     const item = (entry ?? {}) as Record<string, unknown>;
     const name = typeof item.productName === 'string' && item.productName !== '' ? item.productName : 'صنف';
     const size = typeof item.size === 'string' && item.size !== '' ? ` (${item.size})` : '';
+    const variant = Array.isArray(item.variantValues)
+      ? ` (${item.variantValues.map(entry => {
+          const value = (entry ?? {}) as Record<string, unknown>;
+          return `${value.option ?? ''}: ${value.value ?? ''}`;
+        }).join(' · ')})`
+      : '';
     const quantity = Number(item.quantity);
-    return `${name}${size} ×${Number.isFinite(quantity) ? quantity : '؟'}`;
+    return `${name}${variant || size} ×${Number.isFinite(quantity) ? quantity : '؟'}`;
   });
   const shown = lines.slice(0, ITEM_LIMIT).join('، ');
   return lines.length > ITEM_LIMIT ? `${shown} و${lines.length - ITEM_LIMIT} أخرى` : shown;

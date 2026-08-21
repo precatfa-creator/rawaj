@@ -552,7 +552,7 @@ export const Orders: React.FC<OrdersProps> = ({ page, onPage, recordId, onRecord
       <div className="relative h-44 grid grid-cols-2 grid-rows-2 gap-1 bg-surface-100 p-1" aria-label={describeOrderItems(order.items)}>
         {shown.map((item, index) => (
           <Thumb
-            key={`${item.productId}-${item.size ?? ''}-${index}`}
+            key={`${item.productId}-${item.variantId ?? item.size ?? ''}-${index}`}
             src={item.image}
             name={item.productName}
             fit="contain"

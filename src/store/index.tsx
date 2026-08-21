@@ -53,7 +53,7 @@ interface AppState {
 const AppContext = createContext<AppState | undefined>(undefined);
 
 const storeColumns = 'id,storeCode:store_code,name,image,facebookPage:facebook_page,mobileNumber:mobile_number,businessGroupId:business_group_id,productCount:product_count,customerCount:customer_count,orderCount:order_count,totalProfit:total_profit,lastActivity:last_activity';
-const productColumns = 'id,storeId:store_id,name,description,images,purchasePrice:purchase_price,sellingPrice:selling_price,margin,sku,barcode,brand,provider,category,defaultSerial:default_serial,colors,sizes,stock,minStock:min_stock,status,addedAt:added_at,salesCount:sales_count';
+const productColumns = 'id,storeId:store_id,name,description,images,purchasePrice:purchase_price,sellingPrice:selling_price,margin,sku,barcode,brand,provider,category,defaultSerial:default_serial,colors,sizes,variantOptions:variant_options,stock,minStock:min_stock,status,addedAt:added_at,salesCount:sales_count';
 const salesRepColumns = 'id,storeId:store_id,code,name,phone,whatsapp,zones,commission,active,note,createdAt:created_at';
 const customerColumns = 'id,storeId:store_id,code,name,phone,whatsapp,city,address,orderCount:order_count,totalSpent:total_spent,lastPurchase:last_purchase,rating,status';
 

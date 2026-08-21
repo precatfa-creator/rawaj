@@ -1,6 +1,6 @@
 import React, { useMemo, useState } from 'react';
 import { useAppStore } from '../store';
-import { Plus, Search, Pencil, Trash2, Package, ArrowLeftRight, LayoutGrid, Rows3 } from 'lucide-react';
+import { Plus, Search, Pencil, Trash2, Package, ArrowLeftRight, LayoutGrid, Rows3, ZoomIn } from 'lucide-react';
 import { motion } from 'motion/react';
 import { PAGE_SIZE, useDimension, usePagedList } from '../lib/queries';
 import { deleteProduct } from '../lib/mutations';
@@ -10,7 +10,7 @@ import { StockForm } from '../components/StockForm';
 import { Combobox } from '../components/Combobox';
 import { BulkBar } from '../components/BulkBar';
 import { productBulk } from '../lib/bulk';
-import { Pagination, Thumb, initialsOf, money, toneFor } from '../components/ui';
+import { Lightbox, Pagination, Thumb, initialsOf, money, toneFor } from '../components/ui';
 import type { Product } from '../types';
 import type { PagedProps } from '../lib/route';
 
@@ -67,6 +67,7 @@ export const Products: React.FC<PagedProps> = ({ page, onPage }) => {
     () => (localStorage.getItem(VIEW_KEY) === 'list' ? 'list' : 'cards'),
   );
   const [editing, setEditing] = useState<Product | null>(null);
+  const [viewing, setViewing] = useState<Product | null>(null);
   const [creating, setCreating] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState<Product | null>(null);
   const [moving, setMoving] = useState<Product | null>(null);
@@ -74,7 +75,7 @@ export const Products: React.FC<PagedProps> = ({ page, onPage }) => {
   // One page of rows; the filter, the search and the count all run in Postgres.
   const list = usePagedList<Product>({
     table: 'products',
-    columns: 'id,storeId:store_id,name,description,images,purchasePrice:purchase_price,sellingPrice:selling_price,margin,sku,barcode,brand,provider,category,colors,sizes,stock,minStock:min_stock,status,addedAt:added_at,salesCount:sales_count',
+    columns: 'id,storeId:store_id,name,description,images,purchasePrice:purchase_price,sellingPrice:selling_price,margin,sku,barcode,brand,provider,category,colors,sizes,variantOptions:variant_options,stock,minStock:min_stock,status,addedAt:added_at,salesCount:sales_count',
     match: { store_id: activeStoreId ?? undefined, status: status === 'all' ? undefined : status },
     search: searchTerm,
     orderBy: 'name',
@@ -200,6 +201,9 @@ export const Products: React.FC<PagedProps> = ({ page, onPage }) => {
                         <Thumb src={product.images[0]} name={product.name} className="w-10 h-10" />
                         <div className="min-w-0">
                           <div className="font-bold text-surface-900 truncate">{product.name}</div>
+                          {(product.variantOptions ?? []).length > 0 && (
+                            <div className="text-[11px] font-bold text-primary-700">{product.variantOptions.length} خيارات متغيرة</div>
+                          )}
                           <div className="text-xs text-surface-500 truncate" dir="ltr">{product.sku || '—'}</div>
                         </div>
                       </div>
@@ -222,6 +226,11 @@ export const Products: React.FC<PagedProps> = ({ page, onPage }) => {
                         <button onClick={() => setMoving(product)} aria-label={`حركة مخزون ${product.name}`} title="حركة مخزون" className={`${iconButton} text-surface-500 hover:text-primary-700`}>
                           <ArrowLeftRight size={16} />
                         </button>
+                        {product.images.length > 0 && (
+                          <button onClick={() => setViewing(product)} aria-label={`عرض صور ${product.name}`} title="عرض الصور" className={`${iconButton} text-surface-500 hover:text-primary-700`}>
+                            <ZoomIn size={16} />
+                          </button>
+                        )}
                         <button onClick={() => setConfirmDelete(product)} aria-label={`حذف ${product.name}`} title="حذف" className={`${iconButton} text-surface-500 hover:text-rose-700`}>
                           <Trash2 size={16} />
                         </button>
@@ -244,6 +253,16 @@ export const Products: React.FC<PagedProps> = ({ page, onPage }) => {
               className="glass-card rounded-2xl overflow-hidden flex flex-col group relative"
             >
               <div className="absolute top-3 left-3 z-10 flex gap-1.5 transition-opacity md:opacity-0 md:group-hover:opacity-100 md:group-focus-within:opacity-100">
+                {product.images.length > 0 && (
+                  <button
+                    onClick={() => setViewing(product)}
+                    aria-label={`عرض صور ${product.name}`}
+                    title="عرض الصور"
+                    className={`${iconButton} text-surface-600 hover:text-primary-700`}
+                  >
+                    <ZoomIn size={17} />
+                  </button>
+                )}
                 <button
                   onClick={() => setEditing(product)}
                   aria-label={`تعديل ${product.name}`}
@@ -270,7 +289,15 @@ export const Products: React.FC<PagedProps> = ({ page, onPage }) => {
                 </button>
               </div>
 
-              <div className="h-56 w-full relative bg-surface-100 p-4 flex items-center justify-center">
+              <div
+                onClick={product.images.length > 0 ? () => setViewing(product) : undefined}
+                /* The hero already grows on hover; without this the gesture it
+                   advertises does nothing. The zoom button above stays as the
+                   keyboard and screen-reader path, so this needs no role. */
+                className={`h-56 w-full relative bg-surface-100 p-4 flex items-center justify-center ${
+                  product.images.length > 0 ? 'cursor-zoom-in' : ''
+                }`}
+              >
                 {/* The card's image is a hero shot, sized to fill: it keeps its
                     own markup rather than being squeezed into `Thumb`, and
                     shares only the fallback so both views name a product the
@@ -295,6 +322,11 @@ export const Products: React.FC<PagedProps> = ({ page, onPage }) => {
                   )}
                 </div>
                 <h3 className="font-bold text-surface-900 text-lg leading-tight mb-2 line-clamp-2">{product.name}</h3>
+                {(product.variantOptions ?? []).length > 0 && (
+                  <p className="text-xs font-bold text-primary-700">
+                    {(product.variantOptions ?? []).map(option => option.name).join(' · ')}
+                  </p>
+                )}
 
                 <div className="mt-auto pt-4 flex flex-col gap-3">
                   <div className="flex items-end justify-between">
@@ -338,6 +370,13 @@ export const Products: React.FC<PagedProps> = ({ page, onPage }) => {
       />
 
       <StockForm product={moving} onClose={() => setMoving(null)} />
+
+      <Lightbox
+        open={viewing !== null}
+        images={viewing?.images ?? []}
+        name={viewing?.name ?? ''}
+        onClose={() => setViewing(null)}
+      />
 
       <Confirm
         open={confirmDelete !== null}

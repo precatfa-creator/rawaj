@@ -1,6 +1,7 @@
 import { supabase } from '../db/supabase';
 import type {
-  Customer, DeliveryZone, OrderItem, OrderStatus, Product, SalesRep, StockKind, Store,
+  Customer, DeliveryZone, OrderItem, OrderStatus, Product, ProductVariant, ProductVariantOption,
+  SalesRep, StockKind, Store,
 } from '../types';
 import { orderTotals } from './orderMath';
 import { deleteProductImages } from './storage';
@@ -89,6 +90,9 @@ export type ProductDraft = Pick<
 > & {
   images: string[];
   sizes: string[];
+  /** Present for the interactive form; absent keeps the legacy/import path unchanged. */
+  variantOptions?: ProductVariantOption[];
+  variants?: ProductVariant[];
   /** Series used to fill a blank SKU on creation; the doctype default when absent. */
   namingSeries?: string;
 };
@@ -128,6 +132,34 @@ export const saveProduct = async (draft: ProductDraft, isNew: boolean): Promise<
     : draft.sku;
   const row = productRow({ ...draft, sku });
 
+  if (draft.variantOptions && draft.variants) {
+    const { error } = await supabase.rpc('save_product_with_variants', {
+      p_is_new: isNew,
+      p_product: { id: draft.id, stock: draft.stock, ...row },
+      p_variant_options: draft.variantOptions,
+      p_variants: draft.variants.map(variant => ({
+        id: variant.id,
+        optionValues: variant.optionValues,
+        optionKey: variant.optionKey,
+        sku: variant.sku,
+        stock: variant.stock,
+        active: variant.active,
+      })),
+    });
+
+    if (!error) return ok;
+    console.error('saveProduct variants failed', error);
+    const raw = `${error.message ?? ''}`;
+    if (raw.includes('VARIANT_STOCK_MISMATCH')) {
+      return fail('وزّع كامل المخزون الحالي على المتغيرات قبل الحفظ.');
+    }
+    if (raw.includes('VARIANT_HAS_STOCK')) {
+      return fail('لا يمكن حذف تركيبة لها مخزون. صفّر مخزونها بحركة مخزون أولاً.');
+    }
+    if (raw.includes('DUPLICATE_VARIANT')) return fail('هناك تركيبتان متطابقتان للمنتج.');
+    return fail(isNew ? 'تعذر إضافة المنتج ومتغيراته.' : 'تعذر حفظ متغيرات المنتج.');
+  }
+
   return run(
     isNew
       ? supabase.from('products').insert({ id: draft.id, stock: draft.stock, ...row })
@@ -152,11 +184,12 @@ export const deleteProduct = async (id: string, images: string[] = []): Promise<
  * derived from it by the caller.
  */
 export const adjustStock = async (
-  entry: { productId: string; kind: StockKind; quantity: number; note: string },
+  entry: { productId: string; variantId?: string; kind: StockKind; quantity: number; note: string },
 ): Promise<WriteResult> => {
   const { error } = await supabase.rpc('record_stock_entry', {
     p_id: newId(),
     p_product_id: entry.productId,
+    p_variant_id: entry.variantId || null,
     p_kind: entry.kind,
     p_quantity: entry.quantity,
     p_note: entry.note.trim(),
@@ -305,6 +338,8 @@ const orderFailure = (error: { message?: string }, fallback: string): string => 
   if (raw.includes('EMPTY_ORDER')) return 'أضف منتجاً واحداً على الأقل.';
   if (raw.includes('NO_SUCH_ORDER')) return 'الطلب لم يعد موجوداً.';
   if (raw.includes('NO_SUCH_PRODUCT')) return 'المنتج المرتبط بالطلب لم يعد موجوداً.';
+  if (raw.includes('VARIANT_REQUIRED')) return 'اختر اللون/المقاس المطلوب لهذا المنتج.';
+  if (raw.includes('NO_SUCH_VARIANT')) return 'تركيبة المنتج المختارة لم تعد متاحة.';
   if (raw.includes('INVALID_PARTIAL_DELIVERY')) return 'بيانات التسليم الجزئي غير صالحة.';
   if (raw.includes('PERMISSION_DENIED')) return 'لا تملك صلاحية تعديل مخزون هذا المتجر.';
   if (raw.includes('duplicate key')) return 'رقم الطلب مستخدم بالفعل. أعد المحاولة.';

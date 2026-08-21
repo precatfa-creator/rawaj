@@ -57,6 +57,13 @@ assert.notEqual(auditValue('items', oneAt(1)), auditValue('items', oneAt(2)));
 
 // Size separates two lines of the same product that would otherwise look equal.
 assert.equal(auditValue('items', [{ productName: 'قميص', size: 'L', quantity: 3 }]), 'قميص (L) ×3');
+assert.equal(
+  auditValue('items', [{
+    productName: 'فستان', quantity: 3,
+    variantValues: [{ option: 'اللون', value: 'أسود' }, { option: 'المقاس', value: 'X' }],
+  }]),
+  'فستان (اللون: أسود · المقاس: X) ×3',
+);
 
 // A long order stays a readable cell, and an emptied one is not "0 عنصر".
 assert.equal(auditValue('items', []), '—');

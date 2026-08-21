@@ -5,7 +5,7 @@ import { ErrorNote } from './Confirm';
 import { Combobox } from './Combobox';
 import { supabase } from '../db/supabase';
 import { adjustStock } from '../lib/mutations';
-import type { Product, StockEntry, StockKind } from '../types';
+import type { Product, ProductVariant, StockEntry, StockKind } from '../types';
 
 /** Label, and whether the operator's number adds to stock or comes off it. */
 const KINDS: Record<StockKind, { label: string; sign: 1 | -1 | 0 }> = {
@@ -41,6 +41,8 @@ export const StockForm: React.FC<{
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [history, setHistory] = useState<StockEntry[]>([]);
+  const [variants, setVariants] = useState<ProductVariant[]>([]);
+  const [variantId, setVariantId] = useState('');
 
   const open = product !== null;
 
@@ -52,22 +54,31 @@ export const StockForm: React.FC<{
     setCounted(product.stock);
     setNote('');
     setError('');
+    setVariants([]);
+    setVariantId('');
   }
   if (!open && seeded !== null) setSeeded(null);
 
   useEffect(() => {
     if (!product) { setHistory([]); return; }
     let active = true;
-    void supabase
-      .from('stock_entries')
-      .select('id,productId:product_id,storeId:store_id,kind,quantity,balance,note,orderId:order_id,createdAt:created_at')
-      .eq('product_id', product.id)
-      .order('created_at', { ascending: false })
-      .limit(RECENT_LIMIT)
-      .then(({ data, error: queryError }) => {
-        if (queryError) console.error('stock history failed', queryError);
-        if (active) setHistory((data ?? []) as unknown as StockEntry[]);
-      });
+    void Promise.all([
+      supabase.from('stock_entries')
+        .select('id,productId:product_id,storeId:store_id,kind,quantity,balance,note,orderId:order_id,variantId:variant_id,variantBalance:variant_balance,createdAt:created_at')
+        .eq('product_id', product.id).order('created_at', { ascending: false }).limit(RECENT_LIMIT),
+      supabase.from('product_variants')
+        .select('id,productId:product_id,optionValues:option_values,optionKey:option_key,sku,stock,active')
+        .eq('product_id', product.id).eq('active', true).order('option_key'),
+    ]).then(([historyRows, variantRows]) => {
+      if (historyRows.error) console.error('stock history failed', historyRows.error);
+      if (variantRows.error) console.error('product variants failed', variantRows.error);
+      if (!active) return;
+      setHistory((historyRows.data ?? []) as unknown as StockEntry[]);
+      const loaded = (variantRows.data ?? []) as unknown as ProductVariant[];
+      setVariants(loaded);
+      setVariantId(loaded[0]?.id ?? '');
+      setCounted(loaded[0]?.stock ?? product.stock);
+    });
     return () => { active = false; };
   }, [product?.id]);
 
@@ -75,16 +86,21 @@ export const StockForm: React.FC<{
 
   // A stocktake is entered as the number on the shelf, not as a difference —
   // that is what the person holding the clipboard actually has.
-  const delta = kind === 'adjustment' ? counted - product.stock : amount * KINDS[kind].sign;
-  const resulting = product.stock + delta;
+  const selectedVariant = variants.find(variant => variant.id === variantId);
+  const hasVariants = (product.variantOptions ?? []).length > 0;
+  const currentStock = selectedVariant?.stock ?? product.stock;
+  const delta = kind === 'adjustment' ? counted - currentStock : amount * KINDS[kind].sign;
+  const resulting = currentStock + delta;
+  const productResulting = product.stock + delta;
 
   const submit = async (event: FormEvent) => {
     event.preventDefault();
     if (delta === 0) { setError('لا يوجد تغيير لتسجيله.'); return; }
     if (resulting < 0) { setError('الكمية المطلوب خصمها تتجاوز المخزون المتاح.'); return; }
 
+    if (hasVariants && !selectedVariant) { setError('اختر تركيبة المنتج أولاً.'); return; }
     setBusy(true); setError('');
-    const result = await adjustStock({ productId: product.id, kind, quantity: delta, note });
+    const result = await adjustStock({ productId: product.id, variantId: selectedVariant?.id, kind, quantity: delta, note });
     setBusy(false);
     if (result.ok) onClose(); else setError(result.message ?? '');
   };
@@ -104,6 +120,24 @@ export const StockForm: React.FC<{
       }
     >
       <form id="stock-form" className="space-y-4" onSubmit={submit}>
+        {hasVariants && (
+          <Combobox
+            showLabel
+            label="تركيبة المنتج"
+            value={variantId}
+            onChange={value => {
+              setVariantId(value);
+              setCounted(variants.find(variant => variant.id === value)?.stock ?? 0);
+            }}
+            options={variants.map(variant => ({
+              value: variant.id,
+              label: (product.variantOptions ?? []).map(option => variant.optionValues[option.id]).filter(Boolean).join(' · '),
+              hint: `المخزون ${variant.stock}`,
+            }))}
+            placeholder="اختر التركيبة"
+          />
+        )}
+
         <Combobox
           showLabel
           label="نوع الحركة"
@@ -113,7 +147,7 @@ export const StockForm: React.FC<{
         />
 
         {kind === 'adjustment' ? (
-          <Field label="الكمية بعد الجرد" hint={`المسجّل حالياً: ${product.stock}`}>
+          <Field label="الكمية بعد الجرد" hint={`المسجّل حالياً: ${currentStock}`}>
             <input
               type="number" min={0} value={counted || ''} placeholder="0"
               onChange={e => setCounted(Number(e.target.value))}
@@ -131,11 +165,14 @@ export const StockForm: React.FC<{
         )}
 
         <div className="flex items-center justify-between gap-3 bg-surface-50 border border-surface-200 rounded-xl px-4 py-3">
-          <span className="text-sm font-bold text-surface-700">المخزون بعد الحركة</span>
+          <span className="text-sm font-bold text-surface-700">{hasVariants ? 'مخزون التركيبة بعد الحركة' : 'المخزون بعد الحركة'}</span>
           <span className={`font-black text-lg tabular-nums ${resulting < 0 ? 'text-rose-700' : 'text-surface-900'}`}>
-            {product.stock} ← {resulting}
+            {currentStock} ← {resulting}
           </span>
         </div>
+        {hasVariants && (
+          <p className="text-xs text-surface-500">إجمالي مخزون المنتج بعد الحركة: {productResulting}</p>
+        )}
 
         <Field label="ملاحظة" hint="رقم فاتورة المورّد مثلاً — يظهر في سجل الحركات.">
           <input value={note} onChange={e => setNote(e.target.value)} className={fieldClass} />
@@ -154,11 +191,16 @@ export const StockForm: React.FC<{
                   {entry.quantity > 0 ? <ArrowUpRight size={16} /> : <ArrowDownLeft size={16} />}
                 </span>
                 <span className="font-bold text-surface-800 shrink-0">{KINDS[entry.kind]?.label ?? entry.kind}</span>
+                {entry.variantId && (
+                  <span className="text-xs text-primary-700 truncate">
+                    {(product.variantOptions ?? []).map(option => variants.find(variant => variant.id === entry.variantId)?.optionValues[option.id]).filter(Boolean).join(' · ') || 'تركيبة قديمة'}
+                  </span>
+                )}
                 <span className="text-surface-500 truncate flex-1">{entry.note}</span>
                 <span className="tabular-nums font-bold shrink-0">
                   {entry.quantity > 0 ? '+' : ''}{entry.quantity}
                 </span>
-                <span className="tabular-nums text-surface-500 shrink-0">= {entry.balance}</span>
+                <span className="tabular-nums text-surface-500 shrink-0">= {entry.variantBalance ?? entry.balance}</span>
               </li>
             ))}
           </ul>

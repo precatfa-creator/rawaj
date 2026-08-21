@@ -10,6 +10,7 @@ import { byCode, zoneFromRow } from './zones';
 import { statusLabels } from './dashboardStats';
 import { repCoversZone } from './commission';
 import { splitList } from './text';
+import { variantLabel, variantSnapshot } from './variants';
 import type {
   CommissionType, DeliveryZone, Order, OrderItem, OrderStatus, Product, SalesRep, ZoneRegion,
 } from '../types';
@@ -254,7 +255,7 @@ const PRODUCT_ID_HEADER = 'المعرّف الداخلي (لا تعدّله)';
 const SKU_HEADER = 'رمز SKU';
 
 const PRODUCT_COLUMNS =
-  'id,storeId:store_id,name,description,images,purchasePrice:purchase_price,sellingPrice:selling_price,margin,sku,barcode,brand,provider,category,defaultSerial:default_serial,colors,sizes,stock,minStock:min_stock,status,addedAt:added_at,salesCount:sales_count';
+  'id,storeId:store_id,name,description,images,purchasePrice:purchase_price,sellingPrice:selling_price,margin,sku,barcode,brand,provider,category,defaultSerial:default_serial,colors,sizes,variantOptions:variant_options,stock,minStock:min_stock,status,addedAt:added_at,salesCount:sales_count';
 
 /** Scoped to one store: items belong to a store, and so does an import of them. */
 export const productBulk = (storeId: string): BulkSpec<Product> => ({
@@ -494,6 +495,18 @@ export const orderBulk = (
         lookupCustomers('name', customerNames),
       ]);
 
+      const foundProducts = [...new Map([...bySku, ...byName].map(product => [product.id, product])).values()];
+      if (foundProducts.length > 0) {
+        const { data: variantRows, error: variantError } = await supabase.from('product_variants')
+          .select('id,productId:product_id,optionValues:option_values,optionKey:option_key,sku,stock,active')
+          .in('product_id', foundProducts.map(product => product.id)).eq('active', true);
+        if (variantError) console.error('variant lookup failed', variantError);
+        foundProducts.forEach(product => {
+          product.variants = ((variantRows ?? []) as unknown as NonNullable<Product['variants']>)
+            .filter(variant => variant.productId === product.id);
+        });
+      }
+
       // SKU wins over name: it is the identifier the export writes.
       productByIdent = new Map([
         ...byName.map(product => [product.name.trim(), product] as const),
@@ -521,13 +534,27 @@ export const orderBulk = (
       for (const line of parsed.lines) {
         const product = productByIdent.get(line.ident);
         if (!product) return { ok: false, message: `لا يوجد منتج بالرمز أو الاسم "${line.ident}" في هذا المتجر.` };
+        const options = product.variantOptions ?? [];
+        const variant = options.length > 0
+          ? (product.variants ?? []).find(candidate => {
+              const full = variantLabel(variantSnapshot(options, candidate));
+              const short = options.map(option => candidate.optionValues[option.id]).filter(Boolean).join(' · ');
+              return line.size === full || line.size === short;
+            })
+          : undefined;
+        if (options.length > 0 && !variant) {
+          return { ok: false, message: `حدد تركيبة صحيحة للمنتج "${product.name}" بعد علامة #.` };
+        }
         items.push({
           productId: product.id,
           productName: product.name,
           quantity: line.quantity,
           price: line.price ?? product.sellingPrice,
           image: product.images?.[0] ?? '',
-          size: line.size ?? '',
+          ...(variant ? {
+            variantId: variant.id,
+            variantValues: variantSnapshot(options, variant),
+          } : { size: line.size ?? '' }),
         });
       }
 
