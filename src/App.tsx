@@ -38,7 +38,9 @@ const AdminDatabaseChat = lazy(() =>
  * `#/store/<id>/<section>` is the store workspace. The URL is the source of
  * truth, so back/forward and refresh all land where the user expects.
  */
-const Workspace: React.FC<{ profile: Profile }> = ({ profile }) => {
+const Workspace: React.FC<{ profile: Profile; onProfileUpdate: (profile: Profile) => void }> = ({
+  profile, onProfileUpdate,
+}) => {
   const { stores, setActiveStore } = useAppStore();
   const [route, navigate] = useRoute();
 
@@ -76,7 +78,13 @@ const Workspace: React.FC<{ profile: Profile }> = ({ profile }) => {
               ? <DocTypeBuilder />
             // Preferences are the user's own, so every signed-in user gets them.
             : route.view === 'settings'
-              ? <Preferences />
+              ? (
+                <Preferences
+                  profile={profile}
+                  onProfileUpdated={onProfileUpdate}
+                  onOpenNetwork={() => navigate({ view: 'network', storeId: null, page: 0 })}
+                />
+              )
             : null}
           onShowAudit={() => navigate({ view: 'audit', storeId: null, page: 0 })}
           onShowNetwork={() => navigate({ view: 'network', storeId: null, page: 0 })}
@@ -169,6 +177,7 @@ const toProfile = (row: Record<string, unknown>): Profile => ({
   role: row.role as Profile['role'],
   active: row.active as boolean,
   createdAt: row.created_at as string,
+  avatarUrl: (row.avatar_url as string) || '',
 });
 
 const AppContent: React.FC = () => {
@@ -185,7 +194,7 @@ const AppContent: React.FC = () => {
 
     const { data, error } = await supabase
       .from('profiles')
-      .select('id,email,display_name,role,active,created_at')
+      .select('id,email,display_name,role,active,created_at,avatar_url')
       .eq('id', session.user.id)
       .maybeSingle();
 
@@ -239,7 +248,7 @@ const AppContent: React.FC = () => {
     <AppProvider>
       {/* Every animation in the app reads the OS setting through this. */}
       <MotionConfig reducedMotion="user">
-        <Workspace profile={profile} />
+        <Workspace profile={profile} onProfileUpdate={setProfile} />
       </MotionConfig>
     </AppProvider>
   );

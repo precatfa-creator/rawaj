@@ -69,6 +69,88 @@ Deno.serve(async (request) => {
     return json({ user: data });
   }
 
+  if (body.action === 'set-role') {
+    const userId = typeof body.userId === 'string' ? body.userId : '';
+    const role = body.role;
+    if (!userId || (role !== 'admin' && role !== 'user' && role !== 'agent')) {
+      return json({ error: 'Invalid role request' }, 400);
+    }
+    // The last administrator cannot demote themselves: without one, nobody
+    // could manage users or review the audit log ever again.
+    if (userId === userData.user.id && role !== 'admin') {
+      return json({ error: 'You cannot change your own role' }, 400);
+    }
+
+    const { data, error } = await adminClient
+      .from('profiles')
+      .update({ role })
+      .eq('id', userId)
+      .select('id,role')
+      .single();
+
+    if (error) return json({ error: error.message }, 400);
+    return json({ user: data });
+  }
+
+  if (body.action === 'set-password') {
+    const userId = typeof body.userId === 'string' ? body.userId : '';
+    const password = typeof body.password === 'string' ? body.password : '';
+    if (!userId || password.length < 8) return json({ error: 'Password must be at least 8 characters' }, 400);
+
+    const { error } = await adminClient.auth.admin.updateUserById(userId, { password });
+    if (error) return json({ error: error.message }, 400);
+    // Sessions survive a password change, so the old one would keep working
+    // until it expired. Signing out is what makes the reset actually stick.
+    await adminClient.auth.admin.signOut(userId);
+    return json({ ok: true });
+  }
+
+  if (body.action === 'set-email') {
+    const userId = typeof body.userId === 'string' ? body.userId : '';
+    const email = typeof body.email === 'string' ? body.email.trim().toLowerCase() : '';
+    if (!userId || !email.includes('@') || email.includes(' ')) {
+      return json({ error: 'A valid email is required' }, 400);
+    }
+
+    // `email_confirm: true` because there is no SMTP on this project — a
+    // confirmation mail would never arrive, so the admin's word is the
+    // confirmation.
+    const { error: authError } = await adminClient.auth.admin.updateUserById(userId, {
+      email,
+      email_confirm: true,
+    });
+    if (authError) return json({ error: authError.message }, 400);
+
+    // The profile copy is what the app displays; it must agree with the login.
+    const { error: profileError } = await adminClient.from('profiles').update({ email }).eq('id', userId);
+    if (profileError) return json({ error: profileError.message }, 500);
+    return json({ ok: true });
+  }
+
+  if (body.action === 'delete') {
+    const userId = typeof body.userId === 'string' ? body.userId : '';
+    if (!userId) return json({ error: 'Invalid delete request' }, 400);
+    if (userId === userData.user.id) return json({ error: 'You cannot delete your own account' }, 400);
+
+    // Deleting the last administrator would leave the system unmanageable, so
+    // it is refused the same way demoting the last one is.
+    const { data: target } = await adminClient
+      .from('profiles').select('role').eq('id', userId).maybeSingle();
+    if (target?.role === 'admin') {
+      const { count } = await adminClient
+        .from('profiles').select('id', { count: 'exact', head: true })
+        .eq('role', 'admin').eq('active', true);
+      if ((count ?? 0) <= 1) return json({ error: 'The last administrator cannot be deleted' }, 400);
+    }
+
+    // The database does the rest: profiles, memberships, access requests and
+    // settings cascade; the audit log keeps its rows and renders the actor as
+    // a deleted user.
+    const { error } = await adminClient.auth.admin.deleteUser(userId);
+    if (error) return json({ error: error.message }, 400);
+    return json({ ok: true });
+  }
+
   if (body.action !== 'create') return json({ error: 'Unknown action' }, 400);
 
   const email = typeof body.email === 'string' ? body.email.trim().toLowerCase() : '';

@@ -165,6 +165,23 @@ export const Pill: React.FC<{ children: React.ReactNode; tone?: string }> = ({ c
   </span>
 );
 
+/** The outcome of an inline save, announced as it changes. */
+export interface StatusMessage {
+  ok: boolean;
+  text: string;
+}
+
+export const StatusLine: React.FC<{ status: StatusMessage | null }> = ({ status }) =>
+  status ? (
+    <p
+      role="status"
+      aria-live="polite"
+      className={`text-sm font-bold ${status.ok ? 'text-emerald-700' : 'text-rose-700'}`}
+    >
+      {status.text}
+    </p>
+  ) : null;
+
 /**
  * One cached formatter rather than one per call: these run once per money cell,
  * and `Intl.NumberFormat` is expensive to construct.
@@ -263,6 +280,43 @@ export const toneFor = (name: string) => {
 /** First letter of each of the first two words — enough to tell things apart. */
 export const initialsOf = (name: string) =>
   name.trim().split(/\s+/).slice(0, 2).map(word => [...word][0] ?? '').join('') || '؟';
+
+/**
+ * A person's picture, or their initial standing in for one.
+ *
+ * A missing avatar renders the initial on a tinted circle rather than an empty
+ * grey ring — "no photo yet", not "broken". Like Thumb, an `onError` catches a
+ * URL that outlived its object, so both failures land on the same fallback.
+ * The fallback's classes are overridable because contexts dress it differently
+ * (the sidebar uses the gradient, lists use the flat tint).
+ */
+export const Avatar: React.FC<{
+  src?: string;
+  name: string;
+  /** Tailwind sizing for the circle, e.g. `w-10 h-10`. */
+  className?: string;
+  textClass?: string;
+  fallbackClass?: string;
+}> = ({
+  src, name, className = 'w-10 h-10', textClass = 'text-sm',
+  fallbackClass = 'bg-primary-100 text-primary-800',
+}) => {
+  const [failed, setFailed] = useState(false);
+
+  useEffect(() => setFailed(false), [src]);
+
+  const box = `${className} rounded-full shrink-0 grid place-items-center font-bold overflow-hidden`;
+
+  if (!src || failed) {
+    return (
+      <span aria-hidden className={`${box} ${fallbackClass} ${textClass}`}>
+        {(name || '؟').trim().slice(0, 1).toUpperCase()}
+      </span>
+    );
+  }
+
+  return <img src={src} alt="" className={`${box} object-cover`} />;
+};
 
 export const Thumb: React.FC<{
   src?: string;

@@ -321,6 +321,8 @@ export interface Profile {
   role: UserRole;
   active: boolean;
   createdAt: string;
+  /** Empty when the person never uploaded a picture; the initial stands in. */
+  avatarUrl: string;
 }
 
 export interface StoreRole {

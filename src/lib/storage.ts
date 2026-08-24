@@ -1,7 +1,9 @@
 import { supabase } from '../db/supabase';
 
 export const PRODUCT_IMAGE_BUCKET = 'product-images';
+export const AVATAR_BUCKET = 'avatars';
 export const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
+export const MAX_AVATAR_BYTES = 2 * 1024 * 1024;
 export const ACCEPTED_IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/webp', 'image/avif', 'image/gif'];
 
 const EXTENSIONS: Record<string, string> = {
@@ -54,6 +56,46 @@ export const bucketPathFromUrl = (url: string): string | null => {
   if (index === -1) return null;
   const path = url.slice(index + marker.length).split('?')[0];
   return path ? decodeURIComponent(path) : null;
+};
+
+/**
+ * Uploads a profile picture into the owner's own folder and returns its URL.
+ *
+ * The bucket's write policies only accept `avatars/<uid>/…` keys, so the path
+ * is built here rather than trusted from the caller. Avatars are replaced, not
+ * overwritten: a new UUID each time keeps CDN-cached old faces from resurfacing.
+ */
+export const uploadAvatar = async (file: File, userId: string): Promise<UploadResult> => {
+  if (!ACCEPTED_IMAGE_TYPES.includes(file.type)) {
+    return { message: 'الصيغة غير مدعومة. استخدم JPG أو PNG أو WEBP.' };
+  }
+  if (file.size > MAX_AVATAR_BYTES) {
+    return { message: 'حجم الصورة يتجاوز 2 ميجابايت.' };
+  }
+
+  const path = `${userId}/${crypto.randomUUID()}.${EXTENSIONS[file.type] ?? 'bin'}`;
+  const { error } = await supabase.storage
+    .from(AVATAR_BUCKET)
+    .upload(path, file, { contentType: file.type, upsert: false, cacheControl: '31536000' });
+
+  if (error) {
+    console.error('uploadAvatar failed', error);
+    return { message: 'تعذر رفع الصورة. حاول مرة أخرى.' };
+  }
+
+  const { data } = supabase.storage.from(AVATAR_BUCKET).getPublicUrl(path);
+  return { url: data.publicUrl };
+};
+
+/** Removes a stored avatar. URLs outside our bucket are ignored. */
+export const deleteAvatar = async (url: string): Promise<void> => {
+  const marker = `/storage/v1/object/public/${AVATAR_BUCKET}/`;
+  const index = url.indexOf(marker);
+  if (index === -1) return;
+  const path = decodeURIComponent(url.slice(index + marker.length).split('?')[0]);
+  if (!path) return;
+  const { error } = await supabase.storage.from(AVATAR_BUCKET).remove([path]);
+  if (error) console.error('deleteAvatar failed', error);
 };
 
 /**

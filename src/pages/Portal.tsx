@@ -4,6 +4,7 @@ import { ArrowRight, BarChart3, SlidersHorizontal, Blocks, Info, Link2, LogOut, 
 import { useAppStore } from '../store';
 import { supabase } from '../db/supabase';
 import { AboutModal } from '../components/AboutModal';
+import { UserMenu, type UserMenuItem } from '../components/UserMenu';
 import { Dashboard } from './Dashboard';
 import { Stores } from './Stores';
 import { AdminUsers } from './AdminUsers';
@@ -44,7 +45,6 @@ export const Portal: React.FC<PortalProps> = ({
   const { stores } = useAppStore();
   const [showAbout, setShowAbout] = useState(false);
 
-  const avatarLetter = (profile.displayName || profile.email).slice(0, 1).toUpperCase();
   const today = new Date().toLocaleDateString('ar-LY', {
     weekday: 'long',
     day: 'numeric',
@@ -70,7 +70,11 @@ export const Portal: React.FC<PortalProps> = ({
             </div>
           </div>
 
-          <div className="flex flex-wrap items-center justify-end gap-1 sm:gap-2">
+          {/* About stands alone because it answers "what is this?" for anyone;
+              everything that belongs to the signed-in person gathers behind
+              their avatar, so the bar reads at a glance instead of asking the
+              eye to tell six similar glyphs apart. */}
+          <div className="flex items-center justify-end gap-1 sm:gap-2">
             <button
               type="button"
               onClick={() => setShowAbout(true)}
@@ -80,68 +84,25 @@ export const Portal: React.FC<PortalProps> = ({
             >
               <Info size={20} />
             </button>
-            {/* Everyone's, unlike the buttons around it: these are the user's
-                own preferences, not administration. */}
-            <button
-              type="button"
-              onClick={onShowSettings}
-              className={iconButton}
-              aria-label="تفضيلاتي"
-              title="تفضيلاتي"
-            >
-              <SlidersHorizontal size={20} />
-            </button>
-            {profile.role === 'admin' && (
-              <button
-                type="button"
-                onClick={onShowAudit}
-                className={iconButton}
-                aria-label="سجل النظام"
-                title="سجل النظام — التغييرات التي لا تخص متجراً بعينه"
-              >
-                <ShieldCheck size={20} />
-              </button>
-            )}
-            <button
-              type="button"
-              onClick={onShowNetwork}
-              className={iconButton}
-              aria-label="شبكة المتاجر"
-              title="شبكة المتاجر وربط المتاجر المملوكة"
-            >
-              <Link2 size={20} />
-            </button>
-            {profile.role === 'admin' && (
-              <button type="button" onClick={onShowDocTypes} className={iconButton} aria-label="منشئ DocType" title="منشئ DocType">
-                <Blocks size={20} />
-              </button>
-            )}
-            {profile.role === 'admin' && (
-              <button
-                type="button"
-                onClick={() => onShowUsers(true)}
-                className={iconButton}
-                aria-label="إدارة المستخدمين"
-                title="إدارة المستخدمين"
-              >
-                <Settings size={20} />
-              </button>
-            )}
-            <button
-              type="button"
-              onClick={handleLogout}
-              className={`${iconButton} hover:text-rose-700`}
-              aria-label="تسجيل الخروج"
-              title="تسجيل الخروج"
-            >
-              <LogOut size={20} />
-            </button>
-            <div
-              className="w-10 h-10 rounded-full bg-primary-100 text-primary-800 grid place-items-center font-black shrink-0"
-              title={profile.displayName}
-            >
-              {avatarLetter}
-            </div>
+            <UserMenu
+              profile={profile}
+              sections={[
+                [
+                  { label: 'حسابي وتفضيلاتي', icon: SlidersHorizontal, onSelect: onShowSettings },
+                  { label: 'شبكة المتاجر', icon: Link2, onSelect: onShowNetwork },
+                ],
+                ...(profile.role === 'admin'
+                  ? [[
+                      { label: 'إدارة المستخدمين', icon: Settings, onSelect: () => onShowUsers(true) },
+                      { label: 'سجل النظام', icon: ShieldCheck, onSelect: onShowAudit },
+                      { label: 'منشئ DocType', icon: Blocks, onSelect: onShowDocTypes },
+                    ] as UserMenuItem[]]
+                  : []),
+                [
+                  { label: 'تسجيل الخروج', icon: LogOut, danger: true, onSelect: handleLogout },
+                ],
+              ]}
+            />
           </div>
         </header>
 

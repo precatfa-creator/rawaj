@@ -24,7 +24,7 @@ import { motion, AnimatePresence } from 'motion/react';
 import { supabase } from '../db/supabase';
 import type { Profile } from '../types';
 import { AboutModal } from '../components/AboutModal';
-import { CopyableCode } from '../components/ui';
+import { CopyableCode, Avatar } from '../components/ui';
 import { loadCollapsedGroups, saveCollapsedGroups } from '../lib/settings';
 import { useAppStore } from '../store';
 
@@ -180,8 +180,6 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
   const handleLogout = async () => {
     await supabase.auth.signOut();
   };
-
-  const avatarLetter = (profile.displayName || profile.email).slice(0, 1).toUpperCase();
 
   return (
     <div className="min-h-dvh bg-surface-50 flex flex-col md:flex-row rtl" dir="rtl">
@@ -406,9 +404,12 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
           </button>
           <div className="flex items-center justify-between px-2">
             <div className="flex items-center gap-3">
-              <div className="w-10 h-10 rounded-full bg-gradient-to-br from-primary-400 to-primary-600 flex items-center justify-center text-white font-bold shadow-md">
-                {avatarLetter}
-              </div>
+              <Avatar
+                src={profile.avatarUrl}
+                name={profile.displayName || profile.email}
+                className="w-10 h-10 shadow-md"
+                fallbackClass="bg-gradient-to-br from-primary-400 to-primary-600 text-white"
+              />
               <div className="flex flex-col">
                 <span className="font-bold text-sm text-surface-900 max-w-32 truncate">{profile.displayName}</span>
                 <span className="text-xs text-surface-500">{profile.role === 'admin' ? 'مدير النظام' : 'مستخدم'}</span>

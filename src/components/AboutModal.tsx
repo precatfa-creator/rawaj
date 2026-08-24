@@ -126,8 +126,8 @@ export const AboutModal: React.FC<AboutModalProps> = ({ isOpen, onClose }) => {
             <div className="relative flex max-h-[88dvh] flex-col items-center overflow-y-auto px-5 py-6 text-center sm:px-8 sm:py-8">
               <div className="relative mb-4">
                 <div className="grid h-20 w-20 place-items-center rounded-full bg-gradient-to-br from-primary-400 via-primary-500 to-primary-700 p-1 shadow-xl shadow-primary-500/20">
-                  <div className="grid h-full w-full place-items-center rounded-full bg-white text-3xl font-black text-primary-700">
-                    ع
+                  <div className="grid h-full w-full place-items-center rounded-full bg-white">
+                    <img src="/catfa-logo.svg" alt="شعار السستم" width={44} height={44} className="h-11 w-11" />
                   </div>
                 </div>
                 <span className="absolute -bottom-1 -left-1 grid h-8 w-8 place-items-center rounded-full border-2 border-white bg-emerald-500 text-white shadow-md">
