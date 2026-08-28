@@ -16,6 +16,7 @@ import {
 } from '../lib/auditText';
 import { downloadXlsx, type SheetRow } from '../lib/sheet';
 import { variantLabel } from '../lib/variants';
+import { deliveredOf, deliveredUnits, realizedTotal } from '../lib/orderMath';
 import type { DeliveryZone, Order, OrderStatus, SalesRep, StockKind } from '../types';
 
 
@@ -348,6 +349,12 @@ export const OrderDetails: React.FC<{
   };
 
   const units = order?.items.reduce((sum, item) => sum + item.quantity, 0) ?? 0;
+  // A partly delivered order is worth less than it was written for. Both numbers
+  // are shown rather than one replacing the other: an operator reading a total
+  // that dropped needs to see the figure it dropped from.
+  const partial = order?.status === 'delivered_partial';
+  const earned = order ? realizedTotal(order) : 0;
+  const earnedUnits = order ? deliveredUnits(order.items) : 0;
 
   return (
     <Modal
@@ -459,10 +466,15 @@ export const OrderDetails: React.FC<{
                 system, not as a foreign block. white/70 for the labels — /60
                 measures 3.84:1 on this ground, under the 4.5 floor. */}
             <div className="rounded-2xl bg-gradient-to-br from-primary-700 to-primary-900 text-white px-5 py-4 @2xl:min-w-52 shadow-sm shadow-primary-900/20">
-              <p className="text-xs font-bold text-white/70">الإجمالي</p>
-              <p className="text-3xl font-black tabular-nums mt-1">{money(order.total)}</p>
+              <p className="text-xs font-bold text-white/70">{partial ? 'المحصَّل' : 'الإجمالي'}</p>
+              <p className="text-3xl font-black tabular-nums mt-1">{money(earned)}</p>
+              {partial && (
+                <p className="text-xs text-white/70 mt-1 tabular-nums">
+                  من إجمالي مطلوب {money(order.total)}
+                </p>
+              )}
               <p className="text-xs text-white/70 mt-1 tabular-nums">
-                {units} قطعة · {order.items.length} صنف
+                {partial ? `${earnedUnits} من ${units}` : units} قطعة · {order.items.length} صنف
               </p>
             </div>
           </div>
@@ -484,9 +496,11 @@ export const OrderDetails: React.FC<{
                         {item.size && <span className="block text-xs text-surface-500 mt-0.5">مقاس {item.size}</span>}
                       </span>
                       <span className="text-sm text-surface-500 tabular-nums whitespace-nowrap">
-                        {item.quantity} × {money(item.price)}
+                        {partial ? `${deliveredOf(item)}/${item.quantity}` : item.quantity} × {money(item.price)}
                       </span>
-                      <span className="font-bold tabular-nums w-24 text-left">{money(item.quantity * item.price)}</span>
+                      <span className="font-bold tabular-nums w-24 text-left">
+                        {money((partial ? deliveredOf(item) : item.quantity) * item.price)}
+                      </span>
                     </li>
                   ))}
                 </ul>
@@ -504,9 +518,20 @@ export const OrderDetails: React.FC<{
                     </div>
                   )}
                   <div className="flex justify-between border-t border-surface-200 pt-2 mt-1">
-                    <dt className="font-black text-surface-900">الإجمالي</dt>
-                    <dd className="font-black text-lg tabular-nums">{money(order.total)}</dd>
+                    <dt className={partial ? 'text-surface-500' : 'font-black text-surface-900'}>{partial ? 'الإجمالي المطلوب' : 'الإجمالي'}</dt>
+                    <dd className={partial ? 'font-bold tabular-nums' : 'font-black text-lg tabular-nums'}>{money(order.total)}</dd>
                   </div>
+                  {partial && (
+                    <div className="flex justify-between border-t border-surface-200 pt-2 mt-1">
+                      <dt className="font-black text-surface-900">
+                        المحصَّل
+                        <span className="block text-xs font-medium text-surface-500">
+                          الخصم بنسبة ما سُلّم · التوصيل كاملاً
+                        </span>
+                      </dt>
+                      <dd className="font-black text-lg tabular-nums">{money(earned)}</dd>
+                    </div>
+                  )}
                 </dl>
               </Card>
 

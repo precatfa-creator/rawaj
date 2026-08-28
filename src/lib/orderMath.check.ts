@@ -2,6 +2,7 @@
 import assert from 'node:assert/strict';
 import {
   deliveredOf, deliveredTotals, deliveredUnits, isShort, nextOrderNumber, orderedUnits, orderTotals,
+  realizedTotal, realizedUnits,
 } from './orderMath';
 import type { Order, OrderItem } from '../types';
 
@@ -63,5 +64,17 @@ assert.equal(deliveredTotals([line(4, 100, 0)], 40, 0).total, 0);
 
 // An empty order divides by no goods rather than by zero.
 assert.equal(deliveredTotals([], 40, 12).total, 12);
+
+// What the lists print. Only `delivered_partial` reads the per-line numbers:
+// a stale `deliveredQuantity` left on an order moved back to a full delivery is
+// ignored, the same gate public.delivered_units applies in SQL.
+const partly = {
+  status: 'delivered_partial' as const, items: [line(4, 100, 2)], discount: 40, deliveryFee: 12, total: 372,
+};
+assert.equal(realizedTotal(partly), 192);
+assert.equal(realizedUnits(partly), 2);
+assert.equal(realizedTotal({ ...partly, status: 'delivered' as const }), 372);
+assert.equal(realizedUnits({ ...partly, status: 'delivered' as const }), 4);
+assert.equal(realizedTotal({ ...partly, status: 'new' as const }), 372);
 
 console.log('orderMath.ts: all checks passed');

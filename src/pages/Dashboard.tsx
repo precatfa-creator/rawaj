@@ -14,6 +14,7 @@ import {
   BarChart, Bar, Cell, PieChart, Pie, Legend, ComposedChart, Line,
 } from 'recharts';
 import { statusLabels } from '../lib/dashboardStats';
+import { realizedTotal } from '../lib/orderMath';
 import { useDimension, useMonthly, useStoreTotals, useTotals } from '../lib/queries';
 import { usePagedList } from '../lib/queries';
 import type { Order } from '../types';
@@ -116,7 +117,9 @@ export const Dashboard: React.FC = () => {
   // Only the newest handful of orders is fetched, never the whole table.
   const recent = usePagedList<Order>({
     table: 'orders',
-    columns: 'id,orderNumber:order_number,storeId:store_id,customerName:customer_name,total,status,createdAt:created_at',
+    // items/discount/delivery_fee ride along so a partly delivered order can
+    // report what it earned rather than what it was written for.
+    columns: 'id,orderNumber:order_number,storeId:store_id,customerName:customer_name,items,discount,deliveryFee:delivery_fee,total,status,createdAt:created_at',
     orderBy: 'created_at',
     page: 0,
     pageSize: RECENT_ORDERS,
@@ -457,7 +460,7 @@ export const Dashboard: React.FC = () => {
                       </div>
                     </td>
                     <td className="px-6 py-4 text-surface-600">{store?.name}</td>
-                    <td className="px-6 py-4 font-bold text-surface-900 tabular-nums">{formatCurrency(order.total)}</td>
+                    <td className="px-6 py-4 font-bold text-surface-900 tabular-nums">{formatCurrency(realizedTotal(order))}</td>
                     <td className="px-6 py-4">
                       <span className={`px-3 py-1 rounded-full text-xs font-bold ${
                         order.status === 'new' ? 'bg-blue-100 text-blue-800' :

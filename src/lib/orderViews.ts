@@ -1,4 +1,5 @@
-import type { Order, OrderStatus, SalesRep } from '../types';
+import { deliveredOf, realizedTotal, realizedUnits } from './orderMath';
+import type { Order, OrderItem, OrderStatus, SalesRep } from '../types';
 
 export type OrderGroupBy = 'customer' | 'item' | 'rep' | 'status';
 
@@ -13,10 +14,40 @@ export interface OrderViewGroup {
   totalKind: 'orders' | 'lines';
 }
 
-const unitsOf = (order: Order) =>
-  order.items.reduce((sum, item) => sum + item.quantity, 0);
-
 const labelSort = new Intl.Collator('ar-LY', { numeric: true, sensitivity: 'base' });
+
+export interface OrderItemSummary {
+  name: string;
+  units: number;
+  /** Distinct lines of that product in the order — its sizes or variants. */
+  lines: number;
+}
+
+/**
+ * One line per product, for the orders list.
+ *
+ * A three-size order of the same dress is three lines in `items` and reads, in a
+ * table cell, as three near-identical rows of noise. Folded by name it is one
+ * row and a count, which is the thing a person scanning the column is after.
+ * `describeOrderItems` still spells every line out for the tooltip and the log —
+ * this only decides what the cell draws.
+ */
+export const summariseItems = (
+  items: readonly { productId?: string; productName: string; quantity: number }[],
+): OrderItemSummary[] => {
+  const rows = new Map<string, OrderItemSummary>();
+  items.forEach(item => {
+    const name = item.productName || 'صنف';
+    // Keyed the way groupOrders keys its item groups, so two different products
+    // that happen to share a name stay two rows.
+    const key = item.productId || `name:${name}`;
+    const row = rows.get(key) ?? { name, units: 0, lines: 0 };
+    row.units += item.quantity;
+    row.lines += 1;
+    rows.set(key, row);
+  });
+  return [...rows.values()];
+};
 
 /**
  * Turns one filtered order result into the sections used by Group view.
@@ -48,11 +79,16 @@ export const groupOrders = (
   orders.forEach(order => {
     if (by === 'item') {
       const lines = new Map<string, { label: string; units: number; total: number }>();
+      // Counted at what arrived, so a product group's line value matches the
+      // money the order rows above it report. `deliveredOf` is a no-op for
+      // every status but `delivered_partial`.
+      const counted = (item: OrderItem) =>
+        order.status === 'delivered_partial' ? deliveredOf(item) : item.quantity;
       order.items.forEach(item => {
         const key = item.productId || `name:${item.productName}`;
         const line = lines.get(key) ?? { label: item.productName || 'منتج غير مسمى', units: 0, total: 0 };
-        line.units += item.quantity;
-        line.total += item.quantity * item.price;
+        line.units += counted(item);
+        line.total += counted(item) * item.price;
         lines.set(key, line);
       });
       lines.forEach((line, key) => {
@@ -78,8 +114,8 @@ export const groupOrders = (
     const group = take(key, label, 'orders');
     group.orders.push(order);
     group.orderCount += 1;
-    group.units += unitsOf(order);
-    group.total += order.total;
+    group.units += realizedUnits(order);
+    group.total += realizedTotal(order);
   });
 
   const result = [...groups.values()];

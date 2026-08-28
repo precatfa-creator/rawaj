@@ -23,9 +23,10 @@ import {
 } from '../lib/mutations';
 import { orderBulk } from '../lib/bulk';
 import { describeOrderItems } from '../lib/auditText';
+import { realizedTotal } from '../lib/orderMath';
 import { repCoversZone } from '../lib/commission';
 import { announceDelivery } from '../lib/celebrate';
-import { groupOrders, type OrderGroupBy } from '../lib/orderViews';
+import { groupOrders, summariseItems, type OrderGroupBy } from '../lib/orderViews';
 import { Confirm, ErrorNote, ReasonPrompt } from '../components/Confirm';
 import { OrderDetails } from '../components/orderDetails';
 import { OrderForm } from '../components/orderForms';
@@ -33,7 +34,7 @@ import { PartialDeliveryPrompt } from '../components/PartialDelivery';
 import { Combobox } from '../components/Combobox';
 import { BulkBar } from '../components/BulkBar';
 import { money, Pagination, quietButton, Thumb } from '../components/ui';
-import type { Order } from '../types';
+import type { Order, OrderItem } from '../types';
 import type { PagedProps } from '../lib/route';
 
 
@@ -125,6 +126,44 @@ const checkboxClass =
   'w-4 h-4 rounded border-surface-300 text-primary-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500';
 
 const cell = 'px-5 py-4';
+
+/**
+ * The products of one order, folded to one line per product.
+ *
+ * Three sizes of the same dress used to print three near-identical lines and
+ * push the row three lines tall for no information. Here it is one line, the
+ * summed quantity, and a count of how many combinations of it the order holds;
+ * the full per-line phrasing stays on the tooltip, where a person goes when the
+ * summary is not enough. `limit` is how many products a surface has room for —
+ * a table cell wraps, a grouped row gets one line.
+ */
+const OrderItems: React.FC<{ items: OrderItem[]; limit?: number; empty?: string }> = ({
+  items, limit = 2, empty = '—',
+}) => {
+  if (items.length === 0) return <span className="text-surface-400">{empty}</span>;
+  const rows = summariseItems(items);
+  const rest = rows.length - limit;
+  return (
+    <div className="space-y-0.5" title={describeOrderItems(items)}>
+      {rows.slice(0, limit).map(row => (
+        <div key={row.name} className="flex items-baseline gap-1.5">
+          <span className="truncate">{row.name}</span>
+          <span className="shrink-0 tabular-nums text-surface-500">×{row.units}</span>
+          {row.lines > 1 && (
+            <span className="shrink-0 rounded-md bg-surface-100 px-1.5 py-0.5 text-[11px] font-bold tabular-nums text-surface-600">
+              {row.lines === 2 ? 'تركيبتان' : `${row.lines} تركيبات`}
+            </span>
+          )}
+        </div>
+      ))}
+      {rest > 0 && (
+        <div className="text-xs text-surface-500">
+          {rest === 1 ? '+ صنف آخر' : rest === 2 ? '+ صنفان آخران' : `+ ${rest} أصناف أخرى`}
+        </div>
+      )}
+    </div>
+  );
+};
 
 interface OrdersProps extends PagedProps {
   /** The open order, from the URL. */
@@ -479,7 +518,7 @@ export const Orders: React.FC<OrdersProps> = ({ page, onPage, recordId, onRecord
   const actionButton =
     'inline-flex items-center justify-center min-w-11 min-h-11 md:min-w-0 md:min-h-0 p-2.5 md:p-1.5 rounded-lg transition-colors disabled:opacity-40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500';
 
-  const pageTotal = visibleOrders.reduce((sum, order) => sum + order.total, 0);
+  const pageTotal = visibleOrders.reduce((sum, order) => sum + realizedTotal(order), 0);
   const skeleton = (view === 'grouped' ? groupedResult.loading : list.loading) && visibleOrders.length === 0;
 
   const renderStatusControl = (order: Order, busy: boolean, className = 'min-w-32') => (
@@ -916,14 +955,12 @@ export const Orders: React.FC<OrdersProps> = ({ page, onPage, recordId, onRecord
                         dresses apart, and it left an empty grey square whenever a
                         product had no photo. The same phrasing the change log
                         uses, so an order reads identically in both places. */}
-                    <td className={`${cell} max-w-64 align-top`}>
-                      <div className="text-surface-800 whitespace-normal break-words" title={describeOrderItems(order.items)}>
-                        {order.items.length > 0 ? describeOrderItems(order.items) : '—'}
-                      </div>
+                    <td className={`${cell} max-w-64 align-top text-surface-800`}>
+                      <OrderItems items={order.items} />
                     </td>
                     <td className={`${cell} text-surface-600 font-medium max-w-40 truncate`}>{rep?.name ?? 'بدون مندوب'}</td>
                     <td className={`${cell} text-surface-600 font-medium tabular-nums whitespace-nowrap`}>{day(order.deliveryDate)}</td>
-                    <td className={`${cell} font-black text-surface-900 tabular-nums`}>{money(order.total)}</td>
+                    <td className={`${cell} font-black text-surface-900 tabular-nums`}>{money(realizedTotal(order))}</td>
                     <td className={cell}>
                       {renderStatusControl(order, busy)}
                     </td>
@@ -1020,11 +1057,14 @@ export const Orders: React.FC<OrdersProps> = ({ page, onPage, recordId, onRecord
                         <p className="font-black text-surface-900" translate="no">{order.orderNumber}</p>
                         <p className="mt-1 truncate font-bold text-surface-800">{order.customerName}</p>
                       </div>
-                      <p className="shrink-0 text-lg font-black tabular-nums text-surface-900">{money(order.total)}</p>
+                      <p className="shrink-0 text-lg font-black tabular-nums text-surface-900">{money(realizedTotal(order))}</p>
                     </div>
-                    <p className="line-clamp-2 min-h-10 text-sm leading-5 text-surface-600" title={describeOrderItems(order.items)}>
-                      {order.items.length > 0 ? describeOrderItems(order.items) : 'بدون منتجات'}
-                    </p>
+                    {/* One product line plus the "and N more" line: the same
+                        two-line budget the cards were laid out on, so a grid of
+                        them still lines up. */}
+                    <div className="min-h-10 text-sm leading-5 text-surface-600">
+                      <OrderItems items={order.items} limit={1} empty="بدون منتجات" />
+                    </div>
                     <div className="grid grid-cols-2 gap-2 text-xs text-surface-500">
                       <span className="truncate">{rep?.name ?? 'بدون مندوب'}</span>
                       <span className="truncate">{zone?.name ?? 'بدون منطقة'}</span>
@@ -1157,12 +1197,12 @@ export const Orders: React.FC<OrdersProps> = ({ page, onPage, recordId, onRecord
                               </td>
                               <td className="max-w-72 px-4 py-3">
                                 <span className="block truncate font-bold text-surface-900">{order.customerName}</span>
-                                <span className="mt-1 block truncate text-xs text-surface-500" title={describeOrderItems(order.items)}>
-                                  {describeOrderItems(order.items) || '—'}
-                                </span>
+                                <div className="mt-1 text-xs text-surface-500">
+                                  <OrderItems items={order.items} limit={1} />
+                                </div>
                               </td>
                               <td className="max-w-40 truncate px-4 py-3 text-surface-600">{rep?.name ?? 'بدون مندوب'}</td>
-                              <td className="px-4 py-3 font-black tabular-nums text-surface-900">{money(order.total)}</td>
+                              <td className="px-4 py-3 font-black tabular-nums text-surface-900">{money(realizedTotal(order))}</td>
                               <td className="px-4 py-3">{renderStatusControl(order, busy)}</td>
                               <td className="px-4 py-3">{renderOrderActions(order, busy)}</td>
                             </tr>

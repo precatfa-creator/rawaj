@@ -47,6 +47,25 @@ export const deliveredTotals = (items: OrderItem[], discount: number, deliveryFe
 };
 
 /**
+ * What an order is actually worth right now.
+ *
+ * `total` is what was ordered, and it stays that way: the stored columns are
+ * the agreement, and prorating the discount into them would destroy the figure
+ * the operator typed. Only a partly delivered order reads differently, and only
+ * for display — the same gate `public.delivered_units` applies in SQL, so a
+ * stale `deliveredQuantity` on an order moved back to a full delivery is
+ * ignored on both sides.
+ */
+export const realizedTotal = (order: Pick<Order, 'status' | 'items' | 'discount' | 'deliveryFee' | 'total'>): number =>
+  order.status === 'delivered_partial'
+    ? deliveredTotals(order.items, order.discount, order.deliveryFee).total
+    : order.total;
+
+/** Units that count for an order: ordered, unless part of it never arrived. */
+export const realizedUnits = (order: Pick<Order, 'status' | 'items'>): number =>
+  order.status === 'delivered_partial' ? deliveredUnits(order.items) : orderedUnits(order.items);
+
+/**
  * Next free order number. `order_number` is unique in the database, so a race
  * between two tabs surfaces as a write error rather than being silently resolved.
  */
