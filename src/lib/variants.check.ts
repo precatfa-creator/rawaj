@@ -1,5 +1,8 @@
 import assert from 'node:assert/strict';
-import { addOptionValues, nextVariantForOrder, variantCombinations, variantKey, variantLabel, variantSnapshot } from './variants';
+import {
+  addOptionValues, matchingVariants, nextVariantForOrder, variantCombinations, variantKey, variantLabel,
+  variantSnapshot,
+} from './variants';
 
 const options = [
   { id: 'color', name: 'اللون', values: ['أسود', 'أحمر'] },
@@ -40,5 +43,16 @@ assert.deepEqual(addOptionValues(['أسود'], ' أحمر '), ['أسود', 'أح
 assert.deepEqual(addOptionValues(['أسود'], 'أسود'), ['أسود'], 'a repeat would duplicate a matrix row');
 assert.deepEqual(addOptionValues(['S'], 'M، L, M'), ['S', 'M', 'L'], 'one paste may carry several values');
 assert.deepEqual(addOptionValues(['S'], '  '), ['S'], 'blur on an empty field adds nothing');
+
+// The picker row: a blank axis is a wildcard.
+const matrix = combinations.map(optionValues => ({ optionValues }));
+assert.equal(matchingVariants(matrix, options, {}).length, 4, 'no pick targets the whole matrix');
+assert.equal(matchingVariants(matrix, options, { color: 'أسود' }).length, 2, 'one axis picks a whole block');
+assert.deepEqual(
+  matchingVariants(matrix, options, { color: 'أسود', size: 'L' }).map(row => row.optionValues),
+  [{ color: 'أسود', size: 'L' }],
+);
+assert.deepEqual(matchingVariants(matrix, options, { color: 'أزرق' }), [], 'a value no row carries targets nothing');
+assert.equal(matchingVariants(matrix, options, { color: '' }).length, 4, 'an empty string is not a filter');
 
 console.log('variant checks passed');

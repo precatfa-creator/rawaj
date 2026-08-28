@@ -31,6 +31,21 @@ export const variantCombinations = (
   );
 };
 
+/**
+ * The combinations one picker row points at.
+ *
+ * A blank axis is a wildcard: choosing اللون=أبيض and leaving المقاس unset
+ * targets every white size at once. That is what lets a single row stand in for
+ * a whole block of the matrix — one apply sets them all, and the matrix itself
+ * stays the full cross-product that `save_product_with_variants` requires.
+ */
+export const matchingVariants = <T extends Pick<ProductVariant, 'optionValues'>>(
+  variants: readonly T[],
+  options: readonly ProductVariantOption[],
+  pick: Readonly<Record<string, string>>,
+): T[] => variants.filter(variant =>
+  options.every(option => !pick[option.id] || variant.optionValues[option.id] === pick[option.id]));
+
 export const variantSnapshot = (
   options: readonly ProductVariantOption[],
   variant: Pick<ProductVariant, 'optionValues'>,

@@ -6,7 +6,7 @@ import { Combobox } from './Combobox';
 import { ImageUploader } from './ImageUploader';
 import { useAppStore } from '../store';
 import { splitList } from '../lib/text';
-import { addOptionValues, variantCombinations, variantKey } from '../lib/variants';
+import { addOptionValues, matchingVariants, variantCombinations, variantKey } from '../lib/variants';
 import { supabase } from '../db/supabase';
 import {
   createCategory, createCity, createMunicipality, createZoneScope,
@@ -477,6 +477,14 @@ export const ProductForm: React.FC<{
   const [variantOptions, setVariantOptions] = useState<ProductVariantOption[]>([]);
   const [savedVariantOptions, setSavedVariantOptions] = useState<ProductVariantOption[]>([]);
   const [variants, setVariants] = useState<ProductVariant[]>([]);
+  // The matrix stays whole in state whatever the form draws: the save function
+  // deactivates every combination missing from what it is sent, and a hidden row
+  // is still a row somebody's stock ledger and past orders point at. These four
+  // decide what is on screen, nothing else.
+  const [pick, setPick] = useState<Record<string, string>>({});
+  const [bulkQuantity, setBulkQuantity] = useState('');
+  const [touched, setTouched] = useState<Set<string>>(new Set());
+  const [showAllVariants, setShowAllVariants] = useState(false);
   const { busy, error, submit } = useSubmit(onClose);
 
   const [seeded, setSeeded] = useState<string | null>(null);
@@ -505,6 +513,10 @@ export const ProductForm: React.FC<{
     setSizesText((product?.sizes ?? []).join('، '));
     setVariantOptions(product?.variantOptions ?? []);
     setVariants([]);
+    setPick({});
+    setBulkQuantity('');
+    setTouched(new Set());
+    setShowAllVariants(false);
   }
   if (!open && seeded !== null) setSeeded(null);
 
@@ -544,6 +556,17 @@ export const ProductForm: React.FC<{
 
   const rebuildVariants = (options: ProductVariantOption[]) => {
     setVariantOptions(options);
+    // A pick survives editing a different axis, but not the removal of the value
+    // it points at — that would filter the table down to nothing with no visible
+    // cause.
+    setPick(current => {
+      const next: Record<string, string> = {};
+      options.forEach(option => {
+        const value = current[option.id];
+        if (value && option.values.includes(value)) next[option.id] = value;
+      });
+      return next;
+    });
     setVariants(current => variantCombinations(options).map(optionValues => {
       const optionKey = variantKey(options, optionValues);
       return current.find(variant => variant.optionKey === optionKey) ?? {
@@ -575,6 +598,30 @@ export const ProductForm: React.FC<{
   const variantsWereConfigured = (product?.variantOptions ?? []).length > 0;
   const canAllocateVariantStock = isNew || !variantsWereConfigured;
   const variantStock = variants.reduce((sum, variant) => sum + variant.stock, 0);
+
+  const targeted = matchingVariants(variants, variantOptions, pick);
+  const picking = variantOptions.some(option => pick[option.id]);
+  /* Thirty-six rows of zero are thirty-six rows nobody reads. What is drawn is
+     what the picker points at, plus whatever already holds stock or was just
+     given some — so a fresh matrix starts empty and grows as it is filled in,
+     and «عرض الكل» is there for the times that is not enough. */
+  const shownVariants = showAllVariants
+    ? targeted
+    : targeted.filter(variant => picking || variant.stock > 0 || touched.has(variant.id));
+  const hiddenVariants = variants.length - shownVariants.length;
+
+  const applyBulkQuantity = () => {
+    const quantity = Math.max(0, Math.floor(Number(bulkQuantity)));
+    if (bulkQuantity === '' || !Number.isFinite(quantity) || targeted.length === 0) return;
+    const ids = new Set(targeted.map(variant => variant.id));
+    setVariants(current => current.map(variant => (
+      ids.has(variant.id) ? { ...variant, stock: quantity } : variant
+    )));
+    // Remembered so a row set back to zero does not vanish the instant it is
+    // typed, which would read as the number having been thrown away.
+    setTouched(current => new Set([...current, ...ids]));
+    setBulkQuantity('');
+  };
 
   // An item saved before its category was deleted still shows its own value,
   // rather than silently reading as "no category".
@@ -747,13 +794,77 @@ export const ProductForm: React.FC<{
                 ))}
               </div>
 
+              {variants.length > 0 && (
+                <div className="rounded-xl border border-surface-200 bg-white p-3">
+                  <div className="flex flex-wrap items-end gap-2">
+                    {variantOptions.map((option, index) => (
+                      <Combobox
+                        key={option.id}
+                        showLabel
+                        label={option.name || `الخيار ${index + 1}`}
+                        value={pick[option.id] ?? ''}
+                        onChange={value => setPick(current => ({ ...current, [option.id]: value }))}
+                        options={[
+                          { value: '', label: 'كل القيم' },
+                          ...option.values.map(value => ({ value, label: value })),
+                        ]}
+                        placeholder="كل القيم"
+                        className="w-40"
+                      />
+                    ))}
+                    {canAllocateVariantStock && (
+                      <>
+                        <Field label="الكمية">
+                          <input
+                            type="number"
+                            min={0}
+                            inputMode="numeric"
+                            value={bulkQuantity}
+                            placeholder="0"
+                            onChange={event => setBulkQuantity(event.target.value)}
+                            // Enter inside a form submits it; here it applies the
+                            // row, which is what the hands expect after typing a
+                            // number beside an «تطبيق» button.
+                            onKeyDown={event => {
+                              if (event.key !== 'Enter') return;
+                              event.preventDefault();
+                              applyBulkQuantity();
+                            }}
+                            aria-label="الكمية لكل تركيبة مطابقة"
+                            className={`${fieldClass} w-28 tabular-nums`}
+                          />
+                        </Field>
+                        <button
+                          type="button"
+                          onClick={applyBulkQuantity}
+                          disabled={bulkQuantity === '' || targeted.length === 0}
+                          className={`${primaryButton} h-11`}
+                        >
+                          <Plus size={16} /> تطبيق
+                        </button>
+                      </>
+                    )}
+                    {picking && (
+                      <button type="button" onClick={() => setPick({})} className={`${ghostButton} h-11`}>
+                        <X size={16} /> مسح التحديد
+                      </button>
+                    )}
+                  </div>
+                  <p className="mt-2 text-xs text-surface-500">
+                    {canAllocateVariantStock
+                      ? `اترك أي خيار على «كل القيم» ليشمل قيمه كلها؛ سيُطبَّق على ${targeted.length} تركيبة.`
+                      : `الكميات تتغيّر من «حركة مخزون» مع اختيار التركيبة؛ الاختيار هنا يعرض ${targeted.length} تركيبة.`}
+                  </p>
+                </div>
+              )}
               {variants.length > 0 ? (
                 <div className="rounded-xl border border-surface-200 bg-white overflow-hidden">
                   {/* Three axes of five values is 125 rows, which would bury the rest of
                       the form. Only a long matrix gets its own scroll region: a colour ×
                       size product is a dozen rows and reads better whole, without a
                       second scrollbar inside the one the modal body already has. */}
-                  <div className={variants.length > 12 ? 'max-h-96 overflow-auto overscroll-contain' : ''}>
+                  {shownVariants.length > 0 && (
+                  <div className={shownVariants.length > 12 ? 'max-h-96 overflow-auto overscroll-contain' : ''}>
                     <table className="w-full text-sm text-right">
                       <thead className="text-surface-600">
                         <tr>
@@ -768,7 +879,7 @@ export const ProductForm: React.FC<{
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-surface-100">
-                        {variants.map(variant => (
+                        {shownVariants.map(variant => (
                           <tr key={variant.id} className="hover:bg-surface-50">
                             {variantOptions.map(option => (
                               <td key={option.id} className="px-3 py-2 font-bold text-surface-800 whitespace-nowrap">
@@ -784,9 +895,15 @@ export const ProductForm: React.FC<{
                                 placeholder="0"
                                 readOnly={!canAllocateVariantStock}
                                 aria-label={`مخزون ${variantOptions.map(option => variant.optionValues[option.id]).join(' ')}`}
-                                onChange={event => setVariants(current => current.map(row => row.id === variant.id
-                                  ? { ...row, stock: Number(event.target.value) }
-                                  : row))}
+                                onChange={event => {
+                                  setVariants(current => current.map(row => row.id === variant.id
+                                    ? { ...row, stock: Number(event.target.value) }
+                                    : row));
+                                  // Same reason applyBulkQuantity marks them:
+                                  // clearing a row to zero must not pull it out
+                                  // from under the cursor.
+                                  setTouched(current => new Set(current).add(variant.id));
+                                }}
                                 className={`${fieldClass} py-1.5 tabular-nums ${canAllocateVariantStock ? '' : 'bg-surface-100 text-surface-500 cursor-not-allowed'}`}
                               />
                             </td>
@@ -795,6 +912,32 @@ export const ProductForm: React.FC<{
                       </tbody>
                     </table>
                   </div>
+                  )}
+                  {shownVariants.length === 0 && (
+                    <p className="px-3 py-6 text-center text-sm text-surface-500">
+                      {canAllocateVariantStock
+                        ? 'لم تُحدَّد أي كمية بعد — استخدم الصف أعلاه.'
+                        : 'لا مخزون في أي تركيبة بعد.'}
+                    </p>
+                  )}
+                  {/* One button either way. Showing everything also clears the
+                      picker, because "show all" that still hides most of the
+                      matrix behind a filter is the more confusing of the two. */}
+                  {(hiddenVariants > 0 || showAllVariants) && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (showAllVariants) { setShowAllVariants(false); return; }
+                        setShowAllVariants(true);
+                        setPick({});
+                      }}
+                      className="w-full border-t border-surface-100 px-3 py-2 text-xs font-bold text-primary-800 hover:bg-primary-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary-500"
+                    >
+                      {showAllVariants
+                        ? 'إخفاء التركيبات الفارغة'
+                        : `عرض كل التركيبات (${variants.length}) — ${hiddenVariants} مخفية`}
+                    </button>
+                  )}
                   <div className="flex items-center justify-between gap-3 border-t border-primary-100 bg-primary-50 px-3 py-2 font-black text-primary-900">
                     <span>إجمالي المخزون</span>
                     <span className="tabular-nums">{variantStock}</span>
@@ -828,9 +971,6 @@ export const ProductForm: React.FC<{
                     </>
                   )}
                 </p>
-              )}
-              {!canAllocateVariantStock && (
-                <p className="text-xs text-surface-500">الكميات تتغيّر من «حركة مخزون» مع اختيار التركيبة.</p>
               )}
             </>
           )}
